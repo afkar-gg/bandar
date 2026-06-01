@@ -11,6 +11,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
   - `b.34gacha -ai_generated`
   - `b.34gacha sort:score`
   - `b.34gacha rating:safe` (also `rating:questionable`, `rating:explicit`)
+  - `b.nh` fetches random nhentai content
 - Other Rule34 tag operators/filters are passed through as-is.
 
 ## Requirements

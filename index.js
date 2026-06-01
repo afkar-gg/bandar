@@ -35,7 +35,7 @@ function normalizeConfig(config) {
   resolved.requestTimeoutMs = Number(resolved.requestTimeoutMs) > 0 ? Number(resolved.requestTimeoutMs) : 12000;
   resolved.rule34MaxAttempts = Number(resolved.rule34MaxAttempts) > 0 ? Number(resolved.rule34MaxAttempts) : 4;
   resolved.rule34PagePool = Number(resolved.rule34PagePool) > 0 ? Number(resolved.rule34PagePool) : 150;
-  resolved.userAgent = resolved.userAgent || 'Mozilla/5.0 (compatible; bkp-discord-bot/1.0)';
+  resolved.userAgent = resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   if (!resolved.token || typeof resolved.token !== 'string') {
     throw new Error('config.json is missing "token".');
@@ -87,6 +87,13 @@ const AI_GENERATED_TAGS = new Set([
   'ai_art',
   'generated_by_ai',
 ]);
+
+const NHENTAI_API_BASE = 'https://nhentai.net/api';
+const NHENTAI_EXT_MAP = { p: 'png', j: 'jpg', g: 'gif' };
+
+function getNHentaiExtension(t) {
+  return NHENTAI_EXT_MAP[t] || 'jpg';
+}
 
 function parseRule34Tags(raw) {
   if (!raw) {
@@ -392,12 +399,161 @@ function buildRule34Embed(post) {
   return embed;
 }
 
+async function sendRule34Embed(message, post) {
+  try {
+    const embed = buildRule34Embed(post);
+    const sentEmbedMessage = await safeReplyWithEmbed(message, embed);
+
+    if (!sentEmbedMessage) {
+      return null;
+    }
+
+    if (isVideoUrl(post.file_url)) {
+      try {
+        await sentEmbedMessage.reply(post.file_url);
+      } catch (error) {
+        if (error && error.code === 50013) {
+          console.warn(`Cannot send video URL reply in channel ${message.channelId}: Missing Permissions`);
+        } else {
+          console.error('Error sending video URL reply:', error);
+        }
+      }
+    }
+
+    return sentEmbedMessage;
+  } catch (error) {
+    if (error && error.code === 50013) {
+      console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
+    } else {
+      console.error('Error sending Rule34 embed:', error);
+    }
+    return null;
+  }
+}
+
+async function getRandomNHentaiGallery(config, query = '') {
+  const searchQuery = query || '-ai_generated';
+  const firstPageUrl = `${NHENTAI_API_BASE}/galleries/search?query=${encodeURIComponent(searchQuery)}&page=1`;
+
+  let firstPage;
+  try {
+    firstPage = await fetchJson(firstPageUrl, config);
+  } catch (error) {
+    console.error('nHentai search fetch error:', error);
+    return null;
+  }
+
+  const results = firstPage ? (firstPage.result || firstPage.results) : null;
+  if (!Array.isArray(results) || results.length === 0) {
+    return null;
+  }
+
+  const numPages = Math.min(firstPage.num_pages || 1, 500);
+  const randomPage = Math.floor(Math.random() * numPages) + 1;
+
+  let galleryPool;
+  if (randomPage === 1) {
+    galleryPool = results;
+  } else {
+    const pageUrl = `${NHENTAI_API_BASE}/galleries/search?query=${encodeURIComponent(searchQuery)}&page=${randomPage}`;
+    try {
+      const pageData = await fetchJson(pageUrl, config);
+      galleryPool = pageData ? (pageData.result || pageData.results) : null;
+    } catch (error) {
+      console.warn(`nHentai search page ${randomPage} fetch failed, falling back to first page: ${error.message}`);
+      galleryPool = results;
+    }
+  }
+
+  if (!Array.isArray(galleryPool) || galleryPool.length === 0) {
+    return null;
+  }
+
+  return pickRandom(galleryPool);
+}
+
+function buildNHentaiEmbed(gallery) {
+  const galleryUrl = `https://nhentai.net/g/${gallery.id}/`;
+  const coverExt = getNHentaiExtension(gallery.images.cover.t);
+  const coverUrl = `https://t.nhentai.net/galleries/${gallery.media_id}/cover.${coverExt}`;
+
+  const title = gallery.title.english || gallery.title.japanese || gallery.title.pretty || 'Untitled';
+  const tags = Array.isArray(gallery.tags)
+    ? gallery.tags
+      .filter((t) => t.type === 'tag')
+      .map((t) => t.name)
+      .slice(0, 15)
+    : [];
+
+  const embed = new EmbedBuilder()
+    .setTitle(title.slice(0, 256))
+    .setURL(galleryUrl)
+    .setDescription(`[Open gallery](${galleryUrl})`)
+    .addFields(
+      {
+        name: 'Tags',
+        value: tags.length > 0 ? tags.join(', ') : 'No tags',
+      },
+      {
+        name: 'Pages',
+        value: gallery.num_pages ? String(gallery.num_pages) : 'N/A',
+        inline: true,
+      },
+      {
+        name: 'ID',
+        value: String(gallery.id),
+        inline: true,
+      }
+    )
+    .setImage(coverUrl);
+
+  return embed;
+}
+
+async function sendNHentaiEmbed(message, gallery) {
+  try {
+    const embed = buildNHentaiEmbed(gallery);
+    await safeReplyWithEmbed(message, embed);
+  } catch (error) {
+    if (error && error.code === 50013) {
+      console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
+    } else {
+      console.error('Error sending nHentai embed:', error);
+    }
+  }
+}
+
+async function handleNHentaiCommand(message, query, config) {
+  return new Promise((resolve) => {
+    const processFn = async (queueConfig) => {
+      const usedConfig = queueConfig || config;
+      const gallery = await getRandomNHentaiGallery(usedConfig, query);
+
+      if (!gallery) {
+        await safeReply(message, query
+          ? `No nHentai gallery found for query: ${query}`
+          : 'No nHentai gallery found right now.');
+        resolve();
+        return;
+      }
+
+      await sendNHentaiEmbed(message, gallery);
+      resolve();
+    };
+
+    gachaQueue.push({ message, process: processFn, config });
+    processGachaQueue();
+  });
+}
+
 function buildHelp(prefix) {
   return [
     `Commands (${prefix}):`,
     `${prefix}nsfw - toggle this channel authorization (Manage Channels required)`,
     `${prefix}34gacha or ${prefix}34g [tags...] - random Rule34 post (no tags = fully random)`,
     `  examples: ${prefix}34gacha 2girls blue_hair`,
+    `${prefix}nhgacha or ${prefix}nh [query...] - random nHentai gallery (no query = random)`,
+    `  examples: ${prefix}nhgacha mosaic japanese`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
@@ -476,38 +632,6 @@ async function safeReplyWithEmbed(message, embed) {
   }
 }
 
-async function sendRule34Embed(message, post) {
-  try {
-    const embed = buildRule34Embed(post);
-    const sentEmbedMessage = await safeReplyWithEmbed(message, embed);
-
-    if (!sentEmbedMessage) {
-      return null;
-    }
-
-    if (isVideoUrl(post.file_url)) {
-      try {
-        await sentEmbedMessage.reply(post.file_url);
-      } catch (error) {
-        if (error && error.code === 50013) {
-          console.warn(`Cannot send video URL reply in channel ${message.channelId}: Missing Permissions`);
-        } else {
-          console.error('Error sending video URL reply:', error);
-        }
-      }
-    }
-
-    return sentEmbedMessage;
-  } catch (error) {
-    if (error && error.code === 50013) {
-      console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
-    } else {
-      console.error('Error sending Rule34 embed:', error);
-    }
-    return null;
-  }
-}
-
 async function main() {
   process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -579,6 +703,12 @@ async function main() {
         const tagsInput = rest.join(' ').trim();
         const tags = parseRule34Tags(tagsInput);
         await handleGachaCommand(message, tags, config);
+        return;
+      }
+
+      if (command === 'nhgacha' || command === 'nh') {
+        const query = rest.join(' ').trim();
+        await handleNHentaiCommand(message, query, config);
         return;
       }
 
