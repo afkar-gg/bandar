@@ -706,7 +706,7 @@ async function main() {
         return;
       }
 
-      if (command === 'nhgacha' || command === 'nh') {
+      if (command === 'nhgacha' || command === 'nhg') {
         const query = rest.join(' ').trim();
         await handleNHentaiCommand(message, query, config);
         return;
