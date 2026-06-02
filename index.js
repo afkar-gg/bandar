@@ -427,6 +427,16 @@ async function sendRule34Embed(message, post) {
   }
 }
 
+function isNekopoiAiGenerated(post) {
+  const title = post.title.rendered.toLowerCase();
+  const excerpt = post.excerpt.rendered.toLowerCase();
+  const content = title + ' ' + excerpt;
+  
+  // Simple keyword check
+  const aiKeywords = ['ai', 'stable diffusion', 'midjourney', 'dall-e', 'novelai', 'ai art'];
+  return aiKeywords.some((keyword) => content.includes(keyword));
+}
+
 async function getRandomNekopoiPost(config, query = '') {
   let url = `${NEKOPOI_API_BASE}/posts?_embed&per_page=20`;
   
@@ -457,7 +467,17 @@ async function getRandomNekopoiPost(config, query = '') {
     if (!Array.isArray(posts) || posts.length === 0) {
       return null;
     }
-    return pickRandom(posts);
+
+    // Filter AI generated posts
+    const validPosts = posts.filter(post => !isNekopoiAiGenerated(post));
+    
+    if (validPosts.length === 0) {
+      // If all posts in this batch are AI, retry
+      if (query === 'RANDOM_PAGE_FALLBACK') return null;
+      return getRandomNekopoiPost(config, 'RANDOM_PAGE_FALLBACK');
+    }
+
+    return pickRandom(validPosts);
   } catch (error) {
     if (query === 'RANDOM_PAGE_FALLBACK') return null;
     console.error('Nekopoi fetch error:', error);
