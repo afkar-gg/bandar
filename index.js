@@ -88,12 +88,8 @@ const AI_GENERATED_TAGS = new Set([
   'generated_by_ai',
 ]);
 
-const NHENTAI_API_BASE = 'https://nhentai.net/api';
-const NHENTAI_EXT_MAP = { p: 'png', j: 'jpg', g: 'gif' };
+const NEKOPOI_API_BASE = 'https://nekopoi.care/wp-json/wp/v2';
 
-function getNHentaiExtension(t) {
-  return NHENTAI_EXT_MAP[t] || 'jpg';
-}
 
 function parseRule34Tags(raw) {
   if (!raw) {
@@ -431,113 +427,121 @@ async function sendRule34Embed(message, post) {
   }
 }
 
-async function getRandomNHentaiGallery(config, query = '') {
-  const searchQuery = query || '-ai_generated';
-  const firstPageUrl = `${NHENTAI_API_BASE}/galleries/search?query=${encodeURIComponent(searchQuery)}&page=1`;
-
-  let firstPage;
-  try {
-    firstPage = await fetchJson(firstPageUrl, config);
-  } catch (error) {
-    console.error('nHentai search fetch error:', error);
-    return null;
-  }
-
-  const results = firstPage ? (firstPage.result || firstPage.results) : null;
-  if (!Array.isArray(results) || results.length === 0) {
-    return null;
-  }
-
-  const numPages = Math.min(firstPage.num_pages || 1, 500);
-  const randomPage = Math.floor(Math.random() * numPages) + 1;
-
-  let galleryPool;
-  if (randomPage === 1) {
-    galleryPool = results;
+async function getRandomNekopoiPost(config, query = '') {
+  let url = `${NEKOPOI_API_BASE}/posts?_embed&per_page=20`;
+  
+  if (query && query !== 'RANDOM_PAGE_FALLBACK') {
+    url += `&search=${encodeURIComponent(query)}`;
   } else {
-    const pageUrl = `${NHENTAI_API_BASE}/galleries/search?query=${encodeURIComponent(searchQuery)}&page=${randomPage}`;
-    try {
-      const pageData = await fetchJson(pageUrl, config);
-      galleryPool = pageData ? (pageData.result || pageData.results) : null;
-    } catch (error) {
-      console.warn(`nHentai search page ${randomPage} fetch failed, falling back to first page: ${error.message}`);
-      galleryPool = results;
-    }
+    // Probing random pages to approximate random selection
+    const randomPage = Math.floor(Math.random() * 100) + 1;
+    url += `&page=${randomPage}`;
   }
 
-  if (!Array.isArray(galleryPool) || galleryPool.length === 0) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': config.userAgent,
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 400 && !query) {
+        // Fallback to first page if random page is out of bounds
+        return getRandomNekopoiPost(config, 'RANDOM_PAGE_FALLBACK');
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const posts = await response.json();
+    if (!Array.isArray(posts) || posts.length === 0) {
+      return null;
+    }
+    return pickRandom(posts);
+  } catch (error) {
+    if (query === 'RANDOM_PAGE_FALLBACK') return null;
+    console.error('Nekopoi fetch error:', error);
+    // Silent fallback to first page
+    if (!query) {
+      return getRandomNekopoiPost(config, 'RANDOM_PAGE_FALLBACK');
+    }
     return null;
   }
-
-  return pickRandom(galleryPool);
 }
 
-function buildNHentaiEmbed(gallery) {
-  const galleryUrl = `https://nhentai.net/g/${gallery.id}/`;
-  const coverExt = getNHentaiExtension(gallery.images.cover.t);
-  const coverUrl = `https://t.nhentai.net/galleries/${gallery.media_id}/cover.${coverExt}`;
+function buildNekopoiEmbed(post) {
+  const title = post.title.rendered
+    .replace(/&#8211;/g, '–')
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&amp;/g, '&');
 
-  const title = gallery.title.english || gallery.title.japanese || gallery.title.pretty || 'Untitled';
-  const tags = Array.isArray(gallery.tags)
-    ? gallery.tags
-      .filter((t) => t.type === 'tag')
-      .map((t) => t.name)
-      .slice(0, 15)
-    : [];
+  const postUrl = post.link;
+  
+  let imageUrl = null;
+  if (post._embedded && post._embedded['wp:featuredmedia'] && post._embedded['wp:featuredmedia'][0]) {
+    imageUrl = post._embedded['wp:featuredmedia'][0].source_url;
+  }
+
+  const description = post.excerpt.rendered
+    .replace(/<[^>]*>/g, '')
+    .replace(/&hellip;/g, '...')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
 
   const embed = new EmbedBuilder()
     .setTitle(title.slice(0, 256))
-    .setURL(galleryUrl)
-    .setDescription(`[Open gallery](${galleryUrl})`)
+    .setURL(postUrl)
+    .setDescription(description.slice(0, 2048) || `[Open post](${postUrl})`)
     .addFields(
       {
-        name: 'Tags',
-        value: tags.length > 0 ? tags.join(', ') : 'No tags',
-      },
-      {
-        name: 'Pages',
-        value: gallery.num_pages ? String(gallery.num_pages) : 'N/A',
+        name: 'Date',
+        value: new Date(post.date).toLocaleDateString(),
         inline: true,
       },
       {
         name: 'ID',
-        value: String(gallery.id),
+        value: String(post.id),
         inline: true,
       }
-    )
-    .setImage(coverUrl);
+    );
+
+  if (imageUrl) {
+    embed.setImage(imageUrl);
+  }
 
   return embed;
 }
 
-async function sendNHentaiEmbed(message, gallery) {
+async function sendNekopoiEmbed(message, post) {
   try {
-    const embed = buildNHentaiEmbed(gallery);
+    const embed = buildNekopoiEmbed(post);
     await safeReplyWithEmbed(message, embed);
   } catch (error) {
     if (error && error.code === 50013) {
       console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
     } else {
-      console.error('Error sending nHentai embed:', error);
+      console.error('Error sending Nekopoi embed:', error);
     }
   }
 }
 
-async function handleNHentaiCommand(message, query, config) {
+async function handleNekopoiCommand(message, query, config) {
   return new Promise((resolve) => {
     const processFn = async (queueConfig) => {
       const usedConfig = queueConfig || config;
-      const gallery = await getRandomNHentaiGallery(usedConfig, query);
+      const post = await getRandomNekopoiPost(usedConfig, query);
 
-      if (!gallery) {
+      if (!post) {
         await safeReply(message, query
-          ? `No nHentai gallery found for query: ${query}`
-          : 'No nHentai gallery found right now.');
+          ? `No Nekopoi post found for query: ${query}`
+          : 'No Nekopoi post found right now.');
         resolve();
         return;
       }
 
-      await sendNHentaiEmbed(message, gallery);
+      await sendNekopoiEmbed(message, post);
       resolve();
     };
 
@@ -546,14 +550,15 @@ async function handleNHentaiCommand(message, query, config) {
   });
 }
 
+
 function buildHelp(prefix) {
   return [
     `Commands (${prefix}):`,
     `${prefix}nsfw - toggle this channel authorization (Manage Channels required)`,
     `${prefix}34gacha or ${prefix}34g [tags...] - random Rule34 post (no tags = fully random)`,
     `  examples: ${prefix}34gacha 2girls blue_hair`,
-    `${prefix}nhgacha or ${prefix}nh [query...] - random nHentai gallery (no query = random)`,
-    `  examples: ${prefix}nhgacha mosaic japanese`,
+    `${prefix}poigacha or ${prefix}poi [query] - random Nekopoi post (no query = random)`,
+    `  examples: ${prefix}poigacha overflow`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
@@ -706,9 +711,9 @@ async function main() {
         return;
       }
 
-      if (command === 'nhgacha' || command === 'nhg') {
+      if (command === 'poigacha' || command === 'poi') {
         const query = rest.join(' ').trim();
-        await handleNHentaiCommand(message, query, config);
+        await handleNekopoiCommand(message, query, config);
         return;
       }
 

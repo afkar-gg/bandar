@@ -5,7 +5,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 ## Commands
 
 - `b.nsfw` toggles bot authorization for the current channel (requires `Manage Channels`).
-- `b.nh [tags...]` fetches random nhentai contents with optional tags
+- `b.poi [query]` fetches random Nekopoi contents with optional query
 - `b.34gacha [tags...]` fetches one random Rule34 post with optional filters (or fully random if empty).
 - `b.34gacha` examples:
   - `b.34gacha 2girls blue_hair`
