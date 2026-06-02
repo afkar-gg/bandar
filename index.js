@@ -86,6 +86,13 @@ const AI_GENERATED_TAGS = new Set([
   'novelai',
   'ai_art',
   'generated_by_ai',
+  'deepfake',
+  'synthesized',
+  'aiart',
+  'stablediffusion',
+  'midjourneyv6',
+  'nijijourney',
+  'openai',
 ]);
 
 const NEKOPOI_API_BASE = 'https://nekopoi.care/wp-json/wp/v2';
@@ -433,7 +440,7 @@ function isNekopoiAiGenerated(post) {
   const content = title + ' ' + excerpt;
   
   // Simple keyword check
-  const aiKeywords = ['ai', 'stable diffusion', 'midjourney', 'dall-e', 'novelai', 'ai art'];
+  const aiKeywords = ['ai', 'stable diffusion', 'midjourney', 'dall-e', 'novelai', 'ai art', 'deepfake', 'synthesized', 'aiart', 'stablediffusion', 'midjourneyv6', 'nijijourney', 'openai'];
   return aiKeywords.some((keyword) => content.includes(keyword));
 }
 
