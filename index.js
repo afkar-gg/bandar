@@ -496,6 +496,44 @@ async function getRandomNekopoiPost(config, query = '') {
   }
 }
 
+async function getRandomNhentaiPost(config, query = '') {
+    let url = 'https://nhentai.net/api/v2/galleries/random';
+    if (query) {
+        url = `https://nhentai.net/api/v2/search?query=${encodeURIComponent(query)}&sort=recent`;
+    }
+
+    const headers = { 'User-Agent': config.userAgent };
+    if (config.nhentaiApiKey) {
+        headers['Authorization'] = `Bearer ${config.nhentaiApiKey}`;
+    }
+
+    try {
+        const response = await fetch(url, { headers });
+        if (!response.ok) return null;
+        let data = await response.json();
+
+        let post = data;
+        if (query && data.result && Array.isArray(data.result)) {
+            post = pickRandom(data.result);
+        } else if (Array.isArray(data)) {
+            post = pickRandom(data);
+        }
+
+        // If we only got an ID or minimal data, fetch full details
+        if (post && post.id && (!post.title || !post.media_id)) {
+            const detailRes = await fetch(`https://nhentai.net/api/v2/galleries/${post.id}`, { headers });
+            if (detailRes.ok) {
+                post = await detailRes.json();
+            }
+        }
+
+        return post;
+    } catch (error) {
+        console.error('nhentai fetch error:', error);
+        return null;
+    }
+}
+
 function buildNekopoiEmbed(post) {
   const title = post.title.rendered
     .replace(/&#8211;/g, '–')
@@ -541,6 +579,54 @@ function buildNekopoiEmbed(post) {
   return embed;
 }
 
+function buildNhentaiEmbed(post) {
+    if (!post || !post.id) return new EmbedBuilder().setTitle('Error: Post not found or invalid data');
+    
+    let title = 'No Title';
+    try {
+        if (post.title) {
+            if (typeof post.title === 'string') title = post.title;
+            else if (typeof post.title === 'object') {
+                title = post.title.pretty || post.title.english || post.title.japanese || 'No Title';
+            }
+        } else if (post.name) {
+            title = post.name;
+        }
+    } catch (e) { console.error('Title mapping error', e); }
+
+    const postUrl = `https://nhentai.net/g/${post.id}/`;
+    const mediaId = post.media_id || post.mediaId || (post.images?.cover?.t ? post.images.cover.t : null);
+    
+    let ext = 'jpg';
+    if (post.images?.cover?.t === 'p') ext = 'png';
+    else if (post.images?.cover?.t === 'g') ext = 'gif';
+    
+    const thumbUrl = mediaId ? `https://t.nhentai.net/galleries/${mediaId}/cover.${ext}` : null;
+    
+    let tagString = 'No tags';
+    try {
+        if (Array.isArray(post.tags)) {
+            tagString = post.tags.map(t => (typeof t === 'object' ? t.name : t)).slice(0, 15).join(', ');
+        }
+    } catch (e) { console.error('Tags mapping error', e); }
+
+    const pages = post.num_pages || post.numPages || (Array.isArray(post.pages) ? post.pages.length : 'Unknown');
+
+    const embed = new EmbedBuilder()
+        .setTitle(title.length > 250 ? title.slice(0, 250) + '...' : title)
+        .setURL(postUrl)
+        .addFields(
+            { name: 'ID', value: String(post.id), inline: true },
+            { name: 'Pages', value: String(pages), inline: true },
+            { name: 'Tags', value: tagString || 'No tags' }
+        )
+        .setFooter({ text: 'nhentai.net' });
+    if (thumbUrl) {
+        embed.setImage(thumbUrl);
+    }
+    return embed;
+}
+
 async function sendNekopoiEmbed(message, post) {
   try {
     const embed = buildNekopoiEmbed(post);
@@ -552,6 +638,19 @@ async function sendNekopoiEmbed(message, post) {
       console.error('Error sending Nekopoi embed:', error);
     }
   }
+}
+
+async function sendNhentaiEmbed(message, post) {
+    try {
+        const embed = buildNhentaiEmbed(post);
+        await safeReplyWithEmbed(message, embed);
+    } catch (error) {
+        if (error && error.code === 50013) {
+            console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
+        } else {
+            console.error('Error sending nhentai embed:', error);
+        }
+    }
 }
 
 async function handleNekopoiCommand(message, query, config) {
@@ -577,6 +676,29 @@ async function handleNekopoiCommand(message, query, config) {
   });
 }
 
+async function handleNhentaiCommand(message, query, config) {
+  return new Promise((resolve) => {
+    const processFn = async (queueConfig) => {
+      const usedConfig = queueConfig || config;
+      const post = await getRandomNhentaiPost(usedConfig, query);
+
+      if (!post) {
+        await safeReply(message, query
+          ? `No nhentai post found for query: ${query}`
+          : 'No nhentai post found right now.');
+        resolve();
+        return;
+      }
+
+      await sendNhentaiEmbed(message, post);
+      resolve();
+    };
+
+    gachaQueue.push({ message, process: processFn, config });
+    processGachaQueue();
+  });
+}
+
 
 function buildHelp(prefix) {
   return [
@@ -586,6 +708,8 @@ function buildHelp(prefix) {
     `  examples: ${prefix}34gacha 2girls blue_hair`,
     `${prefix}poigacha or ${prefix}poi [query] - random Nekopoi post (no query = random)`,
     `  examples: ${prefix}poigacha overflow`,
+    `${prefix}nhgacha or ${prefix}nh [query] - random nhentai post (no query = random)`,
+    `  examples: ${prefix}nhgacha doujinshi`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
@@ -741,6 +865,12 @@ async function main() {
       if (command === 'poigacha' || command === 'poi') {
         const query = rest.join(' ').trim();
         await handleNekopoiCommand(message, query, config);
+        return;
+      }
+
+      if (command === 'nhgacha' || command === 'nh') {
+        const query = rest.join(' ').trim();
+        await handleNhentaiCommand(message, query, config);
         return;
       }
 
