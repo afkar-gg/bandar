@@ -10,6 +10,8 @@ const {
   EmbedBuilder,
 } = require('discord.js');
 
+const { logInteraction } = require('./logger');
+
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const CHANNELS_PATH = path.join(__dirname, 'channels.json');
 
@@ -290,84 +292,54 @@ function isFatalRule34Error(error) {
 }
 
 async function getRandomRule34Post(config, tags) {
-  // First, try random pages
+  let isAiFiltered = false;
+
+  const fetchAndFilter = async (currentTags, pid, isRandom = true) => {
+    const url = isRandom 
+      ? buildRule34ApiUrl(config, currentTags)
+      : buildRule34ApiUrlWithPage(config, currentTags, pid);
+    
+    try {
+      const payload = await fetchJson(url, config);
+      if (typeof payload === 'string') return { posts: [], filtered: false };
+      if (!Array.isArray(payload) || payload.length === 0) return { posts: [], filtered: false };
+
+      const valid = payload.filter((post) => {
+        if (!post || !looksLikeMedia(post.file_url)) return false;
+        if (isAiGenerated(post)) return false;
+        return true;
+      });
+
+      return { posts: valid, filtered: valid.length === 0 && payload.length > 0 };
+    } catch (error) {
+      if (isFatalRule34Error(error)) throw error;
+      return { posts: [], filtered: false };
+    }
+  };
+
+  // Try random pages
   for (let attempt = 0; attempt < config.rule34MaxAttempts; attempt += 1) {
-    const url = buildRule34ApiUrl(config, tags);
-    let payload;
-    try {
-      payload = await fetchJson(url, config);
-    } catch (error) {
-      if (isFatalRule34Error(error)) {
-        throw error;
-      }
-      console.warn(`Rule34 random fetch attempt ${attempt + 1} failed: ${error.message}`);
-      continue;
-    }
-
-    if (typeof payload === 'string') {
-      throw new Error(`Rule34 API error: ${payload}`);
-    }
-
-    if (!Array.isArray(payload) || payload.length === 0) {
-      continue;
-    }
-
-    const valid = payload.filter((post) => {
-      if (!post || !looksLikeMedia(post.file_url)) {
-        return false;
-      }
-      if (isAiGenerated(post)) {
-        return false;
-      }
-      return true;
-    });
-
-    if (valid.length === 0) {
-      continue;
-    }
-
-    return pickRandom(valid);
+    const result = await fetchAndFilter(tags, 0, true);
+    if (result.posts.length > 0) return pickRandom(result.posts);
+    if (result.filtered) isAiFiltered = true;
   }
 
-  // Fallback: search lower pages sequentially when random pages fail
+  // Fallback: sequential pages
   for (let page = 0; page < config.rule34MaxAttempts; page += 1) {
-    const url = buildRule34ApiUrlWithPage(config, tags, page);
-    let payload;
-    try {
-      payload = await fetchJson(url, config);
-    } catch (error) {
-      if (isFatalRule34Error(error)) {
-        throw error;
-      }
-      console.warn(`Rule34 sequential fetch page ${page} failed: ${error.message}`);
-      continue;
-    }
-
-    if (typeof payload === 'string') {
-      throw new Error(`Rule34 API error: ${payload}`);
-    }
-
-    if (!Array.isArray(payload) || payload.length === 0) {
-      continue;
-    }
-
-    const valid = payload.filter((post) => {
-      if (!post || !looksLikeMedia(post.file_url)) {
-        return false;
-      }
-      if (isAiGenerated(post)) {
-        return false;
-      }
-      return true;
-    });
-
-    if (valid.length === 0) {
-      continue;
-    }
-
-    return pickRandom(valid);
+    const result = await fetchAndFilter(tags, page, false);
+    if (result.posts.length > 0) return pickRandom(result.posts);
+    if (result.filtered) isAiFiltered = true;
   }
 
+  // Smart Correction: If still no results and tags have spaces, try joining with underscores
+  if (tags.length > 1) {
+    const joinedTag = [tags.join('_')];
+    const result = await fetchAndFilter(joinedTag, 0, false);
+    if (result.posts.length > 0) return pickRandom(result.posts);
+    if (result.filtered) isAiFiltered = true;
+  }
+
+  if (isAiFiltered) return 'FILTERED_AI';
   return null;
 }
 
@@ -496,10 +468,10 @@ async function getRandomNekopoiPost(config, query = '') {
   }
 }
 
-async function getRandomNhentaiPost(config, query = '') {
+async function getRandomNhentaiPost(config, query = '', sort = 'popular') {
     let url = 'https://nhentai.net/api/v2/galleries/random';
     if (query) {
-        url = `https://nhentai.net/api/v2/search?query=${encodeURIComponent(query)}&sort=recent`;
+        url = `https://nhentai.net/api/v2/search?query=${encodeURIComponent(query)}&sort=${sort}`;
     }
 
     const headers = { 'User-Agent': config.userAgent };
@@ -660,6 +632,7 @@ async function handleNekopoiCommand(message, query, config) {
       const post = await getRandomNekopoiPost(usedConfig, query);
 
       if (!post) {
+        logInteraction('gacha_result', { type: 'nekopoi', query, result: 'not_found' });
         await safeReply(message, query
           ? `No Nekopoi post found for query: ${query}`
           : 'No Nekopoi post found right now.');
@@ -667,6 +640,7 @@ async function handleNekopoiCommand(message, query, config) {
         return;
       }
 
+      logInteraction('gacha_result', { type: 'nekopoi', query, result: 'success', postId: post.id });
       await sendNekopoiEmbed(message, post);
       resolve();
     };
@@ -676,13 +650,14 @@ async function handleNekopoiCommand(message, query, config) {
   });
 }
 
-async function handleNhentaiCommand(message, query, config) {
+async function handleNhentaiCommand(message, query, config, sort = 'popular') {
   return new Promise((resolve) => {
     const processFn = async (queueConfig) => {
       const usedConfig = queueConfig || config;
-      const post = await getRandomNhentaiPost(usedConfig, query);
+      const post = await getRandomNhentaiPost(usedConfig, query, sort);
 
       if (!post) {
+        logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'not_found' });
         await safeReply(message, query
           ? `No nhentai post found for query: ${query}`
           : 'No nhentai post found right now.');
@@ -690,6 +665,7 @@ async function handleNhentaiCommand(message, query, config) {
         return;
       }
 
+      logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'success', postId: post.id });
       await sendNhentaiEmbed(message, post);
       resolve();
     };
@@ -708,8 +684,9 @@ function buildHelp(prefix) {
     `  examples: ${prefix}34gacha 2girls blue_hair`,
     `${prefix}poigacha or ${prefix}poi [query] - random Nekopoi post (no query = random)`,
     `  examples: ${prefix}poigacha overflow`,
-    `${prefix}nhgacha or ${prefix}nh [query] - random nhentai post (no query = random)`,
-    `  examples: ${prefix}nhgacha doujinshi`,
+    `${prefix}nhgacha or ${prefix}nh [query] [--sort <popular|recent>] - random nhentai post (no query = random)`,
+    `  examples: ${prefix}nhgacha doujinshi --sort popular`,
+    `${prefix}gacha [query] - random gacha from any platform`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
@@ -742,6 +719,7 @@ async function processGachaQueue() {
       await item.process(item.config);
     } catch (error) {
       console.error('Queue item processing error:', error);
+      logInteraction('error', { context: 'queue_processing', message: error.message });
       if (item.message && !item.message.deleted) {
         await safeReply(item.message, 'Command failed. Check bot logs and config.');
       }
@@ -757,7 +735,15 @@ async function handleGachaCommand(message, tags, config) {
       const usedConfig = queueConfig || config;
       const post = await getRandomRule34Post(usedConfig, tags);
 
+      if (post === 'FILTERED_AI') {
+        logInteraction('gacha_result', { type: 'rule34', tags, result: 'filtered_ai' });
+        await safeReply(message, 'All results found have been filtered as they were identified as AI-generated content. We do not provide non-authentic works.');
+        resolve();
+        return;
+      }
+
       if (!post) {
+        logInteraction('gacha_result', { type: 'rule34', tags, result: 'not_found' });
         await safeReply(message, tags.length > 0
           ? `No Rule34 post found for tags: ${tags.join(', ')}`
           : 'No Rule34 post found right now.');
@@ -765,6 +751,7 @@ async function handleGachaCommand(message, tags, config) {
         return;
       }
 
+      logInteraction('gacha_result', { type: 'rule34', tags, result: 'success', postId: post.id });
       await sendRule34Embed(message, post);
       resolve();
     };
@@ -827,12 +814,26 @@ async function main() {
       return;
     }
 
-    const [commandRaw, ...rest] = rawInput.split(' ');
-    const command = commandRaw.toLowerCase();
+    const args = rawInput.split(/\s+/);
+    const command = args[0].toLowerCase();
+    const rest = args.slice(1);
+
+    // Log command interaction
+    logInteraction('command', {
+      user: { id: message.author.id, username: message.author.username },
+      channel: { id: message.channel.id, name: message.channel.name || 'DM' },
+      guild: message.guild ? { id: message.guild.id, name: message.guild.name } : null,
+      command: command,
+      args: rest,
+      fullContent: message.content
+    });
 
     try {
       if (command === 'nsfw') {
-        if (!message.member || !message.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+        const isOwner = message.author.id === process.env.OWNER_ID;
+        const hasPermission = message.member && message.member.permissions.has(PermissionFlagsBits.ManageChannels);
+        
+        if (!isOwner && !hasPermission) {
           await safeReply(message, 'You need `Manage Channels` permission to use this command.');
           return;
         }
@@ -869,14 +870,35 @@ async function main() {
       }
 
       if (command === 'nhgacha' || command === 'nh') {
-        const query = rest.join(' ').trim();
-        await handleNhentaiCommand(message, query, config);
+        let queryArgs = [...rest];
+        let sort = 'popular';
+
+        const sortIdx = queryArgs.indexOf('--sort');
+        if (sortIdx !== -1 && queryArgs[sortIdx + 1]) {
+          sort = queryArgs[sortIdx + 1];
+          queryArgs.splice(sortIdx, 2);
+        }
+
+        const query = queryArgs.join(' ').trim();
+        await handleNhentaiCommand(message, query, config, sort);
+        return;
+      }
+
+      if (command === 'gacha') {
+        const platforms = ['34g', 'nh', 'poi'];
+        const randomPlatform = pickRandom(platforms);
+        const query = rest.join(' ');
+        
+        // Redirect to specific gacha command
+        message.content = `${config.prefix}${randomPlatform} ${query}`;
+        client.emit('messageCreate', message);
         return;
       }
 
       await safeReply(message, buildHelp(config.prefix));
     } catch (error) {
       console.error('Command error:', error);
+      logInteraction('error', { context: 'command_handler', message: error.message, command });
       await safeReply(message, 'Command failed. Check bot logs and config.');
     }
   });
