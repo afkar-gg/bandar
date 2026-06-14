@@ -1,4 +1,4 @@
-# b. NSFW Discord Bot
+# Bandar (bkp) Discord Bot
 
 Prefix-only Discord bot with channel authorization and random NSFW gacha commands.
 
