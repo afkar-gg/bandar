@@ -626,23 +626,27 @@ async function sendNhentaiEmbed(message, post) {
 }
 
 async function handleNekopoiCommand(message, query, config) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const processFn = async (queueConfig) => {
-      const usedConfig = queueConfig || config;
-      const post = await getRandomNekopoiPost(usedConfig, query);
+      try {
+        const usedConfig = queueConfig || config;
+        const post = await getRandomNekopoiPost(usedConfig, query);
 
-      if (!post) {
-        logInteraction('gacha_result', { type: 'nekopoi', query, result: 'not_found' });
-        await safeReply(message, query
-          ? `No Nekopoi post found for query: ${query}`
-          : 'No Nekopoi post found right now.');
+        if (!post) {
+          logInteraction('gacha_result', { type: 'nekopoi', query, result: 'not_found' });
+          await safeReply(message, query
+            ? `No Nekopoi post found for query: ${query}`
+            : 'No Nekopoi post found right now.');
+          resolve();
+          return;
+        }
+
+        logInteraction('gacha_result', { type: 'nekopoi', query, result: 'success', postId: post.id });
+        await sendNekopoiEmbed(message, post);
         resolve();
-        return;
+      } catch (error) {
+        reject(error);
       }
-
-      logInteraction('gacha_result', { type: 'nekopoi', query, result: 'success', postId: post.id });
-      await sendNekopoiEmbed(message, post);
-      resolve();
     };
 
     gachaQueue.push({ message, process: processFn, config });
@@ -651,23 +655,27 @@ async function handleNekopoiCommand(message, query, config) {
 }
 
 async function handleNhentaiCommand(message, query, config, sort = 'popular') {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const processFn = async (queueConfig) => {
-      const usedConfig = queueConfig || config;
-      const post = await getRandomNhentaiPost(usedConfig, query, sort);
+      try {
+        const usedConfig = queueConfig || config;
+        const post = await getRandomNhentaiPost(usedConfig, query, sort);
 
-      if (!post) {
-        logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'not_found' });
-        await safeReply(message, query
-          ? `No nhentai post found for query: ${query}`
-          : 'No nhentai post found right now.');
+        if (!post) {
+          logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'not_found' });
+          await safeReply(message, query
+            ? `No nhentai post found for query: ${query}`
+            : 'No nhentai post found right now.');
+          resolve();
+          return;
+        }
+
+        logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'success', postId: post.id });
+        await sendNhentaiEmbed(message, post);
         resolve();
-        return;
+      } catch (error) {
+        reject(error);
       }
-
-      logInteraction('gacha_result', { type: 'nhentai', query, sort, result: 'success', postId: post.id });
-      await sendNhentaiEmbed(message, post);
-      resolve();
     };
 
     gachaQueue.push({ message, process: processFn, config });
@@ -730,30 +738,34 @@ async function processGachaQueue() {
 }
 
 async function handleGachaCommand(message, tags, config) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const processFn = async (queueConfig) => {
-      const usedConfig = queueConfig || config;
-      const post = await getRandomRule34Post(usedConfig, tags);
+      try {
+        const usedConfig = queueConfig || config;
+        const post = await getRandomRule34Post(usedConfig, tags);
 
-      if (post === 'FILTERED_AI') {
-        logInteraction('gacha_result', { type: 'rule34', tags, result: 'filtered_ai' });
-        await safeReply(message, 'All results found have been filtered as they were identified as AI-generated content. We do not provide non-authentic works.');
+        if (post === 'FILTERED_AI') {
+          logInteraction('gacha_result', { type: 'rule34', tags, result: 'filtered_ai' });
+          await safeReply(message, 'All results found have been filtered as they were identified as AI-generated content. We do not provide non-authentic works.');
+          resolve();
+          return;
+        }
+
+        if (!post) {
+          logInteraction('gacha_result', { type: 'rule34', tags, result: 'not_found' });
+          await safeReply(message, tags.length > 0
+            ? `No Rule34 post found for tags: ${tags.join(', ')}`
+            : 'No Rule34 post found right now.');
+          resolve();
+          return;
+        }
+
+        logInteraction('gacha_result', { type: 'rule34', tags, result: 'success', postId: post.id });
+        await sendRule34Embed(message, post);
         resolve();
-        return;
+      } catch (error) {
+        reject(error);
       }
-
-      if (!post) {
-        logInteraction('gacha_result', { type: 'rule34', tags, result: 'not_found' });
-        await safeReply(message, tags.length > 0
-          ? `No Rule34 post found for tags: ${tags.join(', ')}`
-          : 'No Rule34 post found right now.');
-        resolve();
-        return;
-      }
-
-      logInteraction('gacha_result', { type: 'rule34', tags, result: 'success', postId: post.id });
-      await sendRule34Embed(message, post);
-      resolve();
     };
 
     gachaQueue.push({ message, process: processFn, config });
@@ -788,6 +800,16 @@ async function main() {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
+    sweepers: {
+      Messages: {
+        lifetime: 3600,
+        interval: 600,
+      },
+      GuildMembers: {
+        lifetime: 3600,
+        interval: 600,
+      },
+    },
   });
 
   client.once('ready', () => {
@@ -796,6 +818,15 @@ async function main() {
     }
     console.log(`Logged in as ${client.user.tag}`);
   });
+
+  const shutdown = () => {
+    console.log('Shutting down...');
+    client.destroy();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
   client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot || typeof message.content !== 'string') {
