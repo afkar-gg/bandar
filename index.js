@@ -2,6 +2,69 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const dns = require('node:dns');
+const vm = require('node:vm');
+
+const dnsCache = {};
+const originalLookup = dns.lookup;
+
+async function resolveDoH(host) {
+  try {
+    const res = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`);
+    const data = await res.json();
+    const aRecord = data.Answer?.find(ans => ans.type === 1);
+    if (aRecord?.data) return aRecord.data;
+  } catch (e) {
+    try {
+      const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
+        headers: { 'Accept': 'application/dns-json' }
+      });
+      const data = await res.json();
+      const aRecord = data.Answer?.find(ans => ans.type === 1);
+      if (aRecord?.data) return aRecord.data;
+    } catch (e2) {
+      // ignore
+    }
+  }
+  return null;
+}
+
+dns.lookup = function(hostname, options, callback) {
+  if (typeof options === 'function') {
+    callback = options;
+    options = {};
+  }
+  const sendResult = (ip) => {
+    if (options && options.all) {
+      callback(null, [{ address: ip, family: 4 }]);
+    } else {
+      callback(null, ip, 4);
+    }
+  };
+  
+  const bypassHosts = ['nekopoi.care', 'streampoi.com', 'playmogo.com'];
+  const shouldBypass = bypassHosts.some(host => hostname === host || hostname.endsWith('.' + host));
+  
+  if (shouldBypass) {
+     if (dnsCache[hostname]) {
+       sendResult(dnsCache[hostname]);
+       return;
+     }
+     
+     resolveDoH(hostname).then(ip => {
+       if (ip) {
+         dnsCache[hostname] = ip;
+         sendResult(ip);
+       } else {
+         originalLookup(hostname, options, callback);
+       }
+     }).catch(() => {
+       originalLookup(hostname, options, callback);
+     });
+  } else {
+     originalLookup(hostname, options, callback);
+  }
+};
 
 const {
   Client,
@@ -506,7 +569,115 @@ async function getRandomNhentaiPost(config, query = '', sort = 'popular') {
     }
 }
 
-function buildNekopoiEmbed(post) {
+async function scrapeNekopoiDetails(pageUrl, userAgent) {
+  try {
+    const res = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    
+    if (!res.ok) return null;
+    const html = await res.text();
+    
+    const streamFrames = [];
+    const iframeRegex = /<div id="nk-stream-\d+"[^>]*>\s*<iframe src="([^"]+)"/gi;
+    let match;
+    while ((match = iframeRegex.exec(html)) !== null) {
+      streamFrames.push(match[1]);
+    }
+    
+    if (streamFrames.length === 0) {
+      const altIframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+      while ((match = altIframeRegex.exec(html)) !== null) {
+        const url = match[1];
+        if (url.includes('playmogo') || url.includes('streampoi')) {
+          streamFrames.push(url);
+        }
+      }
+    }
+    
+    let directStreamUrl = null;
+    const streampoiUrl = streamFrames.find(url => url.includes('streampoi.com'));
+    if (streampoiUrl) {
+      try {
+        const embedRes = await fetch(streampoiUrl, {
+          headers: {
+            'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://nekopoi.care/'
+          }
+        });
+        if (embedRes.ok) {
+          const embedHtml = await embedRes.text();
+          const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+          let scriptMatch;
+          let packedScript = '';
+          while ((scriptMatch = scriptRegex.exec(embedHtml)) !== null) {
+            const scriptContent = scriptMatch[1];
+            if (scriptContent.includes('eval(function(p,a,c,k,e,d)')) {
+              packedScript = scriptContent.trim();
+              break;
+            }
+          }
+          
+          if (packedScript) {
+            let unpackedResult = '';
+            const sandbox = {
+              eval: function(code) {
+                unpackedResult = code;
+              },
+              window: {},
+              document: {},
+              $: function() { return { cookie: function() {} }; }
+            };
+            vm.createContext(sandbox);
+            vm.runInContext(packedScript, sandbox);
+            
+            const fileMatch = unpackedResult.match(/file\s*:\s*["']([^"']+)["']/i);
+            if (fileMatch) {
+              directStreamUrl = fileMatch[1];
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error unpacking streampoi:", err.message);
+      }
+    }
+    
+    const downloads = [];
+    const rowRegex = /<div class="nk-download-row"><div class="nk-download-name">([\s\S]+?)<\/div><div class="nk-download-links"><b>LINK<\/b><p>([\s\S]+?)<\/p>/gi;
+    while ((match = rowRegex.exec(html)) !== null) {
+      const name = match[1].replace(/<[^>]*>/g, '').trim();
+      const linksHtml = match[2];
+      
+      const links = [];
+      const linkRegex = /<a href="([^"]+)">([^<]+)<\/a>/gi;
+      let linkMatch;
+      while ((linkMatch = linkRegex.exec(linksHtml)) !== null) {
+        links.push({
+          url: linkMatch[1],
+          host: linkMatch[2].trim()
+        });
+      }
+      
+      downloads.push({
+        name,
+        links
+      });
+    }
+    
+    return {
+      streamFrames,
+      directStreamUrl,
+      downloads
+    };
+  } catch (err) {
+    console.error("Scraping error:", err.message);
+    return null;
+  }
+}
+
+function buildNekopoiEmbed(post, scrapedDetails = null) {
   const title = post.title.rendered
     .replace(/&#8211;/g, '–')
     .replace(/&#8217;/g, "'")
@@ -543,6 +714,52 @@ function buildNekopoiEmbed(post) {
         inline: true,
       }
     );
+
+  if (scrapedDetails) {
+    if (scrapedDetails.streamFrames && scrapedDetails.streamFrames.length > 0) {
+      let streamVal = scrapedDetails.streamFrames.map((url, idx) => `[Server ${idx + 1}](${url})`).join(' | ');
+      if (scrapedDetails.directStreamUrl) {
+        streamVal += `\n[Direct Stream (.m3u8)](${scrapedDetails.directStreamUrl})`;
+      }
+      embed.addFields({
+        name: '📺 Streaming Links',
+        value: streamVal,
+        inline: false
+      });
+    }
+
+    if (scrapedDetails.downloads && scrapedDetails.downloads.length > 0) {
+      const dlLines = scrapedDetails.downloads.map(dl => {
+        const qMatch = dl.name.match(/\[([^\]]+)\]$/);
+        const quality = qMatch ? qMatch[1] : 'Download';
+        const linksStr = dl.links.map(link => `[${link.host}](${link.url})`).join(' | ');
+        return `**${quality}**: ${linksStr}`;
+      });
+
+      let currentVal = '';
+      let chunkIdx = 1;
+      for (const line of dlLines) {
+        if (currentVal.length + line.length + 2 > 1024) {
+          embed.addFields({
+            name: `📥 Download Links Part ${chunkIdx}`,
+            value: currentVal,
+            inline: false
+          });
+          currentVal = line;
+          chunkIdx++;
+        } else {
+          currentVal = currentVal ? `${currentVal}\n${line}` : line;
+        }
+      }
+      if (currentVal) {
+        embed.addFields({
+          name: chunkIdx > 1 ? `📥 Download Links Part ${chunkIdx}` : '📥 Download Links',
+          value: currentVal,
+          inline: false
+        });
+      }
+    }
+  }
 
   if (imageUrl) {
     embed.setImage(imageUrl);
@@ -599,9 +816,10 @@ function buildNhentaiEmbed(post) {
     return embed;
 }
 
-async function sendNekopoiEmbed(message, post) {
+async function sendNekopoiEmbed(message, post, config) {
   try {
-    const embed = buildNekopoiEmbed(post);
+    const scraped = await scrapeNekopoiDetails(post.link, config?.userAgent);
+    const embed = buildNekopoiEmbed(post, scraped);
     await safeReplyWithEmbed(message, embed);
   } catch (error) {
     if (error && error.code === 50013) {
@@ -642,7 +860,7 @@ async function handleNekopoiCommand(message, query, config) {
         }
 
         logInteraction('gacha_result', { type: 'nekopoi', query, result: 'success', postId: post.id });
-        await sendNekopoiEmbed(message, post);
+        await sendNekopoiEmbed(message, post, usedConfig);
         resolve();
       } catch (error) {
         reject(error);
