@@ -3,6 +3,9 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const dns = require('node:dns');
+const https = require('node:https');
+const dnsResolver = new dns.promises.Resolver();
+dnsResolver.setServers(['1.1.1.1', '8.8.8.8', '8.8.4.4']);
 const vm = require('node:vm');
 
 const dnsCache = {};
@@ -42,7 +45,7 @@ dns.lookup = function(hostname, options, callback) {
     }
   };
   
-  const bypassHosts = ['nekopoi.care', 'streampoi.com', 'playmogo.com'];
+  const bypassHosts = ['nekopoi.care', 'streampoi.com', 'playmogo.com', 'api-inference.huggingface.co', 'huggingface.co'];
   const shouldBypass = bypassHosts.some(host => hostname === host || hostname.endsWith('.' + host));
   
   if (shouldBypass) {
@@ -98,9 +101,13 @@ function normalizeConfig(config) {
 
   resolved.prefix = 'b.';
   resolved.requestTimeoutMs = Number(resolved.requestTimeoutMs) > 0 ? Number(resolved.requestTimeoutMs) : 12000;
+  resolved.imageGenTimeoutMs = Number(resolved.imageGenTimeoutMs) > 0 ? Number(resolved.imageGenTimeoutMs) : 120000;
   resolved.rule34MaxAttempts = Number(resolved.rule34MaxAttempts) > 0 ? Number(resolved.rule34MaxAttempts) : 4;
   resolved.rule34PagePool = Number(resolved.rule34PagePool) > 0 ? Number(resolved.rule34PagePool) : 150;
   resolved.userAgent = resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  resolved.pollinationsApiKey = resolved.pollinationsApiKey || '';
+  resolved.hordeApiKey = resolved.hordeApiKey || '';
+  resolved.hordeTimeoutMs = Number(resolved.hordeTimeoutMs) > 0 ? Number(resolved.hordeTimeoutMs) : 600000;
 
   if (!resolved.token || typeof resolved.token !== 'string') {
     throw new Error('config.json is missing "token".');
@@ -902,6 +909,343 @@ async function handleNhentaiCommand(message, query, config, sort = 'popular') {
 }
 
 
+// ─── Pollinations Image Generation (gratis) ──────────────────────────────────
+
+const POLLINATIONS_HOST = 'gen.pollinations.ai';
+
+const POLLINATION_MODELS = {
+  'flux': { id: 'flux', label: 'FLUX' },
+  'flux-schnell': { id: 'black-forest-labs/flux.1-schnell', label: 'FLUX.1 schnell' },
+  'sana': { id: 'sana', label: 'SANA' },
+};
+
+const POLLINATION_DEFAULT_MODEL = 'flux';
+
+const POLLINATION_SIZES = {
+  'square': { width: 1024, height: 1024 },
+  'portrait': { width: 832, height: 1216 },
+  'landscape': { width: 1216, height: 832 },
+  'wide': { width: 1344, height: 768 },
+  'tall': { width: 768, height: 1344 },
+};
+
+const POLLINATION_DEFAULT_SIZE = 'square';
+
+/**
+ * Resolve a hostname using a custom DNS resolver pointed at Cloudflare/Google
+ * IPs (1.1.1.1, 8.8.8.8) via plain UDP DNS — completely bypasses the system
+ * resolver and requires no HTTP/TLS at all.
+ */
+async function resolveViaCustomDns(hostname) {
+  try {
+    const ips = await dnsResolver.resolve4(hostname);
+    return ips && ips.length > 0 ? ips[0] : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * HTTPS request helper that pre-resolves the hostname via the custom UDP DNS
+ * resolver and connects straight to the IP with correct SNI/Host headers.
+ */
+async function httpsRequestRaw(host, path, { headers = {}, method = 'GET', body = null, timeoutMs = 15000 } = {}) {
+  const resolvedIp = (await resolveViaCustomDns(host)) || host;
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: resolvedIp,
+        servername: host,
+        path,
+        method,
+        headers: { Host: host, ...headers },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, buffer: Buffer.concat(chunks) }));
+        res.on('error', reject);
+      }
+    );
+    req.on('timeout', () => req.destroy(new Error(`Request timed out setelah ${timeoutMs / 1000}s`)));
+    req.on('error', reject);
+    if (body !== null && body !== undefined) req.write(body);
+    req.end();
+  });
+}
+
+/**
+ * Generate an image via the free Pollinations API:
+ *   GET https://gen.pollinations.ai/image/{prompt}?model=..&width=..&height=..
+ * Optional API key (config.pollinationsApiKey) untuk prioritas & model berbayar,
+ * tapi API ini JALAN GRATIS tanpa key.
+ * Returns { buffer, contentType, modelId }.
+ */
+async function generateImagePollinations(config, prompt, modelKey = POLLINATION_DEFAULT_MODEL, sizeKey = POLLINATION_DEFAULT_SIZE) {
+  const model = POLLINATION_MODELS[modelKey] || POLLINATION_MODELS[POLLINATION_DEFAULT_MODEL];
+  const size = POLLINATION_SIZES[sizeKey] || POLLINATION_SIZES[POLLINATION_DEFAULT_SIZE];
+
+  const params = new URLSearchParams({
+    model: model.id,
+    width: String(size.width),
+    height: String(size.height),
+  });
+  if (config.pollinationsApiKey) params.set('key', config.pollinationsApiKey);
+
+  const path = `/image/${encodeURIComponent(prompt)}?${params.toString()}`;
+  const res = await httpsRequestRaw(POLLINATIONS_HOST, path, { timeoutMs: config.imageGenTimeoutMs });
+
+  if (res.statusCode !== 200) {
+    let msg = '';
+    try {
+      const parsed = JSON.parse(res.buffer.toString());
+      msg = (parsed.error && (parsed.error.message || parsed.error.detail)) || parsed.detail || parsed.message || '';
+    } catch (_) {}
+    if (!msg) msg = res.buffer.toString().slice(0, 200);
+    throw new Error(`Pollinations error ${res.statusCode}: ${msg}`);
+  }
+
+  const contentType = res.headers['content-type'] || 'image/jpeg';
+  if (!contentType.startsWith('image/')) {
+    // Pollinations kadang membalas teks/JSON walau HTTP 200 (mis. prompt ditolak filter konten)
+    throw new Error(`Pollinations tidak mengembalikan gambar (${contentType}): ${res.buffer.toString().slice(0, 200)}`);
+  }
+
+  return { buffer: res.buffer, contentType, modelId: model.id };
+}
+
+// ─── AI Horde Image Generation (gratis, NSFW, antre) ──────────────────────────
+
+const HORDE_HOST = 'stablehorde.net';
+
+const HORDE_MODELS = {
+  'abyss': { id: 'AbyssOrangeMix-AfterDark', label: 'AbyssOrangeMix (anime NSFW, cepat)' },
+  'anything': { id: 'Anything Diffusion', label: 'Anything Diffusion (anime)' },
+  'aam': { id: 'AAM XL', label: 'AAM XL (anime, kualitas tinggi)' },
+  'pony': { id: 'AMPonyXL', label: 'AMPonyXL (pony/anime)' },
+  'real': { id: 'AbsoluteReality', label: 'AbsoluteReality (realistis)' },
+};
+
+const HORDE_DEFAULT_MODEL = 'abyss';
+
+const HORDE_SIZES = {
+  'square': { width: 512, height: 512 },
+  'landscape': { width: 768, height: 512 },
+  'portrait': { width: 512, height: 768 },
+};
+
+const HORDE_DEFAULT_SIZE = 'square';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildHordeError(res, stage) {
+  let msg = '';
+  try {
+    const parsed = JSON.parse(res.buffer.toString());
+    msg = (parsed.message || (parsed.errors && parsed.errors.apikey) || '').toString();
+  } catch (_) {}
+  if (!msg) msg = res.buffer.toString().slice(0, 200);
+  switch (res.statusCode) {
+    case 401:
+      return new Error(`Horde: API key ditolak (401) — cek hordeApiKey di config.json.`);
+    case 429:
+      return new Error('Horde: rate limit / kudos tidak cukup (429). Coba lagi nanti.');
+    default:
+      return new Error(`Horde error ${res.statusCode} saat ${stage}: ${msg}`);
+  }
+}
+
+/**
+ * Generate an image via AI Horde (free community GPU network, NSFW-friendly).
+ * Anonymous (hordeApiKey kosong / key "0000000000") diprioritaskan paling
+ * belakang — antrean bisa 5-15+ menit. Polling status sampai done.
+ * Returns { buffer, contentType, modelId }.
+ */
+async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE) {
+  const model = HORDE_MODELS[modelKey] || HORDE_MODELS[HORDE_DEFAULT_MODEL];
+  const size = HORDE_SIZES[sizeKey] || HORDE_SIZES[HORDE_DEFAULT_SIZE];
+  const apiKey = config.hordeApiKey || '0000000000';
+  const timeoutMs = config.hordeTimeoutMs || 600000;
+  const authHeaders = { apikey: apiKey, 'Content-Type': 'application/json' };
+
+  // 1) Submit job ke antrean
+  const payload = {
+    prompt,
+    params: { width: size.width, height: size.height, steps: 20, sampler_name: 'k_euler', cfg_scale: 7 },
+    models: [model.id],
+    nsfw: true,
+  };
+  const submit = await httpsRequestRaw(HORDE_HOST, '/api/v2/generate/async', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify(payload),
+    timeoutMs: 30000,
+  });
+  if (submit.statusCode !== 202) throw buildHordeError(submit, 'submit');
+
+  let submitData;
+  try {
+    submitData = JSON.parse(submit.buffer.toString());
+  } catch (_) {
+    throw new Error('Horde: respons submit tidak valid.');
+  }
+  const jobId = submitData.id;
+  if (!jobId) throw new Error('Horde: tidak ada job id pada respons submit.');
+
+  // 2) Polling status sampai done
+  const deadline = Date.now() + timeoutMs;
+  const pollEveryMs = 20000;
+  while (Date.now() < deadline) {
+    await sleep(pollEveryMs);
+
+    const status = await httpsRequestRaw(HORDE_HOST, `/api/v2/generate/status/${jobId}`, {
+      headers: authHeaders,
+      timeoutMs: 30000,
+    });
+    if (status.statusCode === 404) throw new Error('Horde: job tidak ditemukan (404). Coba lagi.');
+
+    let statusData = null;
+    try {
+      statusData = JSON.parse(status.buffer.toString());
+    } catch (_) {}
+
+    if (statusData) {
+      if (statusData.faulted) throw new Error('Horde: job gagal diproses worker. Coba lagi nanti.');
+      if (statusData.done) {
+        const gen = statusData.generations && statusData.generations[0];
+        if (!gen || !gen.img) throw new Error('Horde: selesai tapi tidak ada gambar di hasil.');
+        const buffer = Buffer.from(gen.img, 'base64');
+        return { buffer, contentType: 'image/jpeg', modelId: model.id };
+      }
+    }
+  }
+
+  throw new Error(`Horde: timeout menunggu hasil (${Math.round(timeoutMs / 60000)} menit). Antrean gratis bisa panjang — coba lagi nanti.`);
+}
+
+async function handleGenCommand(message, args, config) {
+  // Parse flags: --provider <pollinations|horde> | --horde, --model <name>, --size <name>
+  let provider = 'pollinations';
+  const argsCopy = [...args];
+
+  const providerFlagIdx = argsCopy.indexOf('--provider');
+  if (providerFlagIdx !== -1 && argsCopy[providerFlagIdx + 1]) {
+    provider = argsCopy[providerFlagIdx + 1].toLowerCase();
+    argsCopy.splice(providerFlagIdx, 2);
+  }
+  const hordeFlagIdx = argsCopy.indexOf('--horde');
+  if (hordeFlagIdx !== -1) {
+    provider = 'horde';
+    argsCopy.splice(hordeFlagIdx, 1);
+  }
+
+  const isHorde = provider === 'horde';
+  if (provider !== 'pollinations' && provider !== 'horde') {
+    await safeReply(message, `❌ Provider tidak dikenal: \`${provider}\`\nTersedia: pollinations (default, instan) | horde (NSFW gratis, antre).\nContoh: \`b.gen maid seductive --provider horde\``);
+    return;
+  }
+
+  const MODELS = isHorde ? HORDE_MODELS : POLLINATION_MODELS;
+  const DEFAULT_MODEL = isHorde ? HORDE_DEFAULT_MODEL : POLLINATION_DEFAULT_MODEL;
+  const SIZES = isHorde ? HORDE_SIZES : POLLINATION_SIZES;
+  const DEFAULT_SIZE = isHorde ? HORDE_DEFAULT_SIZE : POLLINATION_DEFAULT_SIZE;
+
+  let modelKey = DEFAULT_MODEL;
+  let sizeKey = DEFAULT_SIZE;
+
+  const modelFlagIdx = argsCopy.indexOf('--model');
+  if (modelFlagIdx !== -1 && argsCopy[modelFlagIdx + 1]) {
+    modelKey = argsCopy[modelFlagIdx + 1].toLowerCase();
+    argsCopy.splice(modelFlagIdx, 2);
+    if (!MODELS[modelKey]) {
+      const validKeys = Object.keys(MODELS).join(', ');
+      await safeReply(message, `❌ Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}): ${validKeys}`);
+      return;
+    }
+  }
+
+  const sizeFlagIdx = argsCopy.indexOf('--size');
+  if (sizeFlagIdx !== -1 && argsCopy[sizeFlagIdx + 1]) {
+    sizeKey = argsCopy[sizeFlagIdx + 1].toLowerCase();
+    argsCopy.splice(sizeFlagIdx, 2);
+    if (!SIZES[sizeKey]) {
+      const validSizes = Object.keys(SIZES).join(', ');
+      await safeReply(message, `❌ Ukuran tidak dikenal: \`${sizeKey}\`\nUkuran yang tersedia (${provider}): ${validSizes}`);
+      return;
+    }
+  }
+
+  const prompt = argsCopy.join(' ').trim();
+  if (!prompt) {
+    await safeReply(message, `❌ Berikan prompt untuk generate gambar.\nContoh: \`b.gen a beautiful anime girl\``);
+    return;
+  }
+
+  const providerLabel = isHorde ? 'AI Horde' : 'Pollinations';
+
+  // Status "generating..."
+  let statusMsg;
+  try {
+    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`)\nPrompt: \`${prompt.slice(0, 200)}\`${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}`);
+  } catch (_) {}
+
+  try {
+    logInteraction('gen_request', {
+      user: { id: message.author.id, username: message.author.username },
+      prompt,
+      provider,
+      model: modelKey,
+      size: sizeKey,
+    });
+
+    const result = isHorde
+      ? await generateImageHorde(config, prompt, modelKey, sizeKey)
+      : await generateImagePollinations(config, prompt, modelKey, sizeKey);
+    const { buffer, contentType, modelId } = result;
+
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : 'jpg';
+    const filename = `generated.${ext}`;
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎨 Generated Image')
+      .setDescription(`**Prompt:** ${prompt.slice(0, 1024)}`)
+      .addFields(
+        { name: 'Provider', value: providerLabel, inline: true },
+        { name: 'Model', value: `\`${modelId}\``, inline: true },
+        { name: 'Requested by', value: `<@${message.author.id}>`, inline: true }
+      )
+      .setImage(`attachment://${filename}`)
+      .setFooter({ text: isHorde ? 'Generated via AI Horde (gratis)' : 'Generated via Pollinations (gratis)' });
+
+    try {
+      await message.reply({
+        embeds: [embed],
+        files: [{ attachment: buffer, name: filename }],
+      });
+    } catch (sendError) {
+      if (sendError && sendError.code === 50013) {
+        console.warn(`Cannot send image in channel ${message.channelId}: Missing Permissions`);
+      } else {
+        throw sendError;
+      }
+    }
+
+    logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'success' });
+  } catch (error) {
+    logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'error', message: error.message });
+    console.error('Image generation error:', error);
+    await safeReply(message, `❌ Gagal generate gambar: ${error.message}`);
+  } finally {
+    if (statusMsg) {
+      try { await statusMsg.delete(); } catch (_) {}
+    }
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function buildHelp(prefix) {
   return [
     `Commands (${prefix}):`,
@@ -913,6 +1257,11 @@ function buildHelp(prefix) {
     `${prefix}nhgacha or ${prefix}nh [query] [--sort <popular|recent>] - random nhentai post (no query = random)`,
     `  examples: ${prefix}nhgacha doujinshi --sort popular`,
     `${prefix}gacha [query] - random gacha from any platform`,
+    `${prefix}gen <prompt> [--provider <pollinations|horde>] [--model <model>] [--size <size>] - generate AI image (gratis)`,
+    `  provider pollinations (default, instan, ada filter) | horde (NSFW bebas, antre ~5-15 mnt)`,
+    `  pollinations models: ${Object.keys(POLLINATION_MODELS).join(', ')} | sizes: ${Object.keys(POLLINATION_SIZES).join(', ')}`,
+    `  horde models: ${Object.keys(HORDE_MODELS).join(', ')} | sizes: ${Object.keys(HORDE_SIZES).join(', ')}`,
+    `  examples: ${prefix}gen maid --provider horde --model abyss --size portrait`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
@@ -1141,6 +1490,11 @@ async function main() {
         // Redirect to specific gacha command
         message.content = `${config.prefix}${randomPlatform} ${query}`;
         client.emit('messageCreate', message);
+        return;
+      }
+
+      if (command === 'gen' || command === 'generate') {
+        await handleGenCommand(message, rest, config);
         return;
       }
 
