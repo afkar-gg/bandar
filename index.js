@@ -1058,13 +1058,54 @@ function buildHordeError(res, stage) {
   }
 }
 
+function formatHordeEta(sec) {
+  if (!sec || sec <= 0) return null;
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} detik`;
+  return `${Math.ceil(sec / 60)} menit`;
+}
+
+function formatElapsed(sec) {
+  if (!sec || sec < 0) return '0 detik';
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} detik`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return s > 0 ? `${m} menit ${s} detik` : `${m} menit`;
+}
+
+async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
+  if (!statusMsg) return;
+  const eta = formatHordeEta(info.waitTimeSec);
+  const pos = typeof info.queuePosition === 'number' ? info.queuePosition : null;
+
+  let queueLine;
+  if (pos !== null && pos > 0) {
+    queueLine = `⏳ Antrean: **${pos} di depan**`;
+    if (typeof info.processing === 'number' && info.processing > 0) queueLine += ` (${info.processing} diproses)`;
+    queueLine += ` | Estimasi: **~${eta || 'beberapa menit'}**`;
+  } else if (pos === 0) {
+    queueLine = `⚡ Sedang diproses worker...${eta ? ` (sekitar **~${eta}**)` : ''}`;
+  } else {
+    queueLine = '⏳ Mencari posisi antrean...';
+  }
+
+  const header = `🎨 Generating gambar... (AI Horde, model: \`${modelKey}\`, size: \`${sizeKey}\`)`;
+  const elapsed = typeof info.elapsedSec === 'number' ? `\n📈 Sudah menunggu: ${formatElapsed(info.elapsedSec)}` : '';
+  const promptLine = `\nPrompt: \`${prompt.slice(0, 200)}\``;
+  try {
+    await statusMsg.edit(`${header}\n${queueLine}${elapsed}${promptLine}`);
+  } catch (_) {
+    // Pesan status sudah terhapus / tidak bisa diedit — abaikan
+  }
+}
+
 /**
  * Generate an image via AI Horde (free community GPU network, NSFW-friendly).
  * Anonymous (hordeApiKey kosong / key "0000000000") diprioritaskan paling
  * belakang — antrean bisa 5-15+ menit. Polling status sampai done.
+ * onStatus(info) dipanggil tiap poll: { queuePosition, processing, waitTimeSec, elapsedSec }.
  * Returns { buffer, contentType, modelId }.
  */
-async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE) {
+async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE, onStatus = null) {
   const model = HORDE_MODELS[modelKey] || HORDE_MODELS[HORDE_DEFAULT_MODEL];
   const size = HORDE_SIZES[sizeKey] || HORDE_SIZES[HORDE_DEFAULT_SIZE];
   const apiKey = config.hordeApiKey || '0000000000';
@@ -1096,7 +1137,8 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
   if (!jobId) throw new Error('Horde: tidak ada job id pada respons submit.');
 
   // 2) Polling status sampai done
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   const pollEveryMs = 20000;
   while (Date.now() < deadline) {
     await sleep(pollEveryMs);
@@ -1119,6 +1161,16 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
         if (!gen || !gen.img) throw new Error('Horde: selesai tapi tidak ada gambar di hasil.');
         const buffer = Buffer.from(gen.img, 'base64');
         return { buffer, contentType: 'image/jpeg', modelId: model.id };
+      }
+      if (typeof onStatus === 'function') {
+        try {
+          await onStatus({
+            queuePosition: statusData.queue_position,
+            processing: statusData.processing,
+            waitTimeSec: Math.round(statusData.wait_time || 0),
+            elapsedSec: Math.round((Date.now() - startedAt) / 1000),
+          });
+        } catch (_) {}
       }
     }
   }
@@ -1202,7 +1254,7 @@ async function handleGenCommand(message, args, config) {
     });
 
     const result = isHorde
-      ? await generateImageHorde(config, prompt, modelKey, sizeKey)
+      ? await generateImageHorde(config, prompt, modelKey, sizeKey, (info) => updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey))
       : await generateImagePollinations(config, prompt, modelKey, sizeKey);
     const { buffer, contentType, modelId } = result;
 
