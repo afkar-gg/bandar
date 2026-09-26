@@ -1339,10 +1339,17 @@ async function handleGenCommand(message, args, config) {
   const kudosInfo = isHorde ? ` | ~${estimateHordeKudos(effSize.width, effSize.height, steps)} kudos | steps: ${steps}` : '';
   const resInfo = isHorde && effSize ? `\n🖼️ Resolusi: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
 
+  // Kalau kanal belum Age Restricted, Discord auto-scan & memblokir media NSFW
+  // (gambar jadi placeholder 97 byte, attachment dilepas). Peringatkan di depan.
+  const ageRestricted = !message.channel || typeof message.channel.nsfw !== 'boolean' || message.channel.nsfw;
+  const ageWarn = isHorde && !ageRestricted
+    ? '\n⚠️ Kanal ini belum **Age Restricted** — Discord kemungkinan besar memblokir gambar NSFW-nya. Jalankan `b.nsfw` (butuh `Manage Channels`).'
+    : '';
+
   // Status "generating..."
   let statusMsg;
   try {
-    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}`);
+    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}${ageWarn}`);
   } catch (_) {}
 
   try {
@@ -1372,7 +1379,9 @@ async function handleGenCommand(message, args, config) {
         { name: 'Requested by', value: `<@${message.author.id}>`, inline: true }
       )
       .setImage(`attachment://${filename}`)
-      .setFooter({ text: isHorde ? 'Generated via AI Horde (gratis)' : 'Generated via Pollinations (gratis)' });
+      .setFooter({ text: (isHorde && !ageRestricted)
+        ? '⚠️ Kanal belum Age Restricted — Discord bisa saja memblokir gambarnya'
+        : (isHorde ? 'Generated via AI Horde (gratis)' : 'Generated via Pollinations (gratis)') });
 
     try {
       await message.reply({
@@ -1382,9 +1391,12 @@ async function handleGenCommand(message, args, config) {
     } catch (sendError) {
       if (sendError && sendError.code === 50013) {
         console.warn(`Cannot send image in channel ${message.channelId}: Missing Permissions`);
-      } else {
-        throw sendError;
+        // Jangan diam-diam sukses: user harus tahu kenapa gambarnya nggak muncul
+        logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'send_denied', message: 'Missing Permissions (50013)' });
+        await safeReply(message, '⚠️ Gambar sudah jadi, tapi bot nggak bisa mengirimnya — kurang izin `Attach Files` / `Send Messages` di kanal ini.\n   Minta admin tambahkan izinnya, lalu ulangi command-nya.');
+        return;
       }
+      throw sendError;
     }
 
     logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'success' });
@@ -1403,7 +1415,7 @@ async function handleGenCommand(message, args, config) {
 function buildHelp(prefix) {
   return [
     `Commands (${prefix}):`,
-    `${prefix}nsfw - toggle this channel authorization (Manage Channels required)`,
+    `${prefix}nsfw - toggle NSFW access for this channel + set Discord Age Restricted (Manage Channels required)`,
     `${prefix}34gacha or ${prefix}34g [tags...] - random Rule34 post (no tags = fully random)`,
     `  examples: ${prefix}34gacha 2girls blue_hair`,
     `${prefix}poigacha or ${prefix}poi [query] - random Nekopoi post (no query = random)`,
@@ -1589,25 +1601,39 @@ async function main() {
         const hasPermission = message.member && message.member.permissions.has(PermissionFlagsBits.ManageChannels);
         
         if (!isOwner && !hasPermission) {
-          await safeReply(message, 'You need `Manage Channels` permission to use this command.');
+          await safeReply(message, '❌ Butuh izin `Manage Channels` untuk pakai command ini.');
           return;
         }
+
+        // Age restriction native Discord WAJIB ikut di-toggle: kalau kanal tidak
+        // ditandai NSFW, Discord auto-scan dan memblokir gambar NSFW hasil generate
+        // (media di-encrypt, attachment dilepas, user cuma lihat placeholder).
+        const syncNativeFlag = async (enabled) => {
+          try {
+            await message.channel.edit({ nsfw: enabled });
+            return enabled
+              ? '📌 Kanal juga ditandai **Age Restricted (NSFW)** di Discord — gambar NSFW sekarang tampil normal.'
+              : '📌 Age Restricted (NSFW) di Discord dimatikan untuk kanal ini.';
+          } catch (err) {
+            return `⚠️ Gagal ubah flag Age Restricted: \`${err.message}\`\n   → Discord kemungkinan tetap memblokir gambar NSFW di kanal ini.`;
+          }
+        };
 
         if (allowlist.has(message.channelId)) {
           allowlist.delete(message.channelId);
           await saveAllowlist(allowlist);
-          await safeReply(message, 'NSFW bot access is now disabled for this channel.');
+          await safeReply(message, `🔞 Akses NSFW bot **dimatikan** untuk kanal ini.\n${await syncNativeFlag(false)}`);
           return;
         }
 
         allowlist.add(message.channelId);
         await saveAllowlist(allowlist);
-        await safeReply(message, 'NSFW bot access is now enabled for this channel.');
+        await safeReply(message, `🔞 Akses NSFW bot **dinyalakan** untuk kanal ini.\n${await syncNativeFlag(true)}`);
         return;
       }
 
       if (!allowlist.has(message.channelId)) {
-        await safeReply(message, 'This channel is not authorized. Use `b.nsfw` first (Manage Channels required).');
+        await safeReply(message, '❌ Kanal ini belum diotorisasi. Jalankan `b.nsfw` dulu (butuh izin `Manage Channels`).');
         return;
       }
 
