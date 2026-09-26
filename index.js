@@ -1019,13 +1019,70 @@ async function generateImagePollinations(config, prompt, modelKey = POLLINATION_
 
 const HORDE_HOST = 'stablehorde.net';
 
+// Model terkurasi dari 177 model aktif di horde — hanya yang worker-nya ada
+// dan reputasinya bagus. res: 'xl' → butuh resolusi lebih besar (kudos lebih mahal).
 const HORDE_MODELS = {
-  'abyss': { id: 'AbyssOrangeMix-AfterDark', label: 'AbyssOrangeMix (anime NSFW, cepat)' },
-  'anything': { id: 'Anything Diffusion', label: 'Anything Diffusion (anime)' },
-  'aam': { id: 'AAM XL', label: 'AAM XL (anime, kualitas tinggi)' },
-  'pony': { id: 'AMPonyXL', label: 'AMPonyXL (pony/anime)' },
-  'real': { id: 'AbsoluteReality', label: 'AbsoluteReality (realistis)' },
+  // ── Anime SD1.5 — murah & cepat (~6 kudos/gambar di 512²) ──
+  'abyss':       { id: 'AbyssOrangeMix-AfterDark', group: 'anime', label: 'AbyssOrangeMix AfterDark' },
+  'deliberate':  { id: 'Deliberate 3.0', group: 'anime', label: 'Deliberate 3.0' },
+  'anything':    { id: 'Anything v5', group: 'anime', label: 'Anything v5' },
+  'acertain':    { id: 'ACertainThing', group: 'anime', label: 'ACertainThing' },
+  'grapefruit':  { id: 'Grapefruit Hentai', group: 'anime', label: 'Grapefruit Hentai' },
+  'dreamshaper': { id: 'Dreamshaper', group: 'anime', label: 'Dreamshaper' },
+  'lyriel':      { id: 'Lyriel', group: 'anime', label: 'Lyriel' },
+  'ned':         { id: 'NeverEnding Dream', group: 'anime', label: 'NeverEnding Dream' },
+  'mix526':      { id: '526Mix-Animated', group: 'anime', label: '526Mix-Animated' },
+  'flat2d':      { id: 'Flat-2D Animerge', group: 'anime', label: 'Flat-2D Animerge' },
+  'toonyou':     { id: 'ToonYou', group: 'anime', label: 'ToonYou' },
+
+  // ── Anime XL / Pony / Illustrious — kualitas terbaik, lebih mahal ──
+  'wai':         { id: 'WAI-NSFW-illustrious-SDXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Illustrious SDXL' },
+  'waipony':     { id: 'WAI-ANI-NSFW-PONYXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Pony XL' },
+  'nova':        { id: 'Nova Anime XL', group: 'animexl', res: 'xl', label: 'Nova Anime XL' },
+  'hassaku':     { id: 'Hassaku XL', group: 'animexl', res: 'xl', label: 'Hassaku XL' },
+  'aam':         { id: 'AAM XL', group: 'animexl', res: 'xl', label: 'AAM XL' },
+  'pony':        { id: 'AMPonyXL', group: 'animexl', res: 'xl', label: 'AMPonyXL' },
+  'albedo':      { id: 'AlbedoBase XL 3.1', group: 'animexl', res: 'xl', label: 'AlbedoBase XL 3.1' },
+  'animagine':   { id: 'Animagine XL', group: 'animexl', res: 'xl', label: 'Animagine XL' },
+  'prefpony':    { id: 'Prefect Pony', group: 'animexl', res: 'xl', label: 'Prefect Pony' },
+  'rag':         { id: 'Rag Illustrious Mix', group: 'animexl', res: 'xl', label: 'Rag Illustrious Mix' },
+  'zavy':        { id: 'ZavyChromaXL', group: 'animexl', res: 'xl', label: 'ZavyChromaXL' },
+  'anima':       { id: 'Anima-Turbo-v1.1', group: 'animexl', res: 'xl', label: 'Anima-Turbo v1.1' },
+
+  // ── Realistis ──
+  'real':        { id: 'AbsoluteReality', group: 'real', label: 'AbsoluteReality' },
+  'rv':          { id: 'Realistic Vision', group: 'real', label: 'Realistic Vision' },
+  'juggernaut':  { id: 'Juggernaut XL', group: 'real', res: 'xl', label: 'Juggernaut XL' },
+  'icbinp':      { id: "ICBINP - I Can't Believe It's Not Photography", group: 'real', label: 'ICBINP (foto realistis)' },
+  'icbinpxl':    { id: 'ICBINP XL', group: 'real', res: 'xl', label: 'ICBINP XL' },
+  'natvis':      { id: 'NatViS', group: 'real', label: 'NatViS' },
+  'realbiter':   { id: 'RealBiter', group: 'real', label: 'RealBiter' },
+  'perfectworld':{ id: 'Perfect World', group: 'real', label: 'Perfect World' },
+  'majicmix':    { id: 'majicMIX realistic', group: 'real', label: 'majicMIX realistic' },
+  'edge':        { id: 'Edge Of Realism', group: 'real', label: 'Edge Of Realism' },
+  'etherreal':   { id: 'Ether Real Mix', group: 'real', label: 'Ether Real Mix' },
+  'woopwoop':    { id: 'Woop-Woop Photo', group: 'real', label: 'Woop-Woop Photo' },
+  'cyberpony':   { id: 'CyberRealistic Pony', group: 'real', res: 'xl', label: 'CyberRealistic Pony' },
+
+  // ── Furry ──
+  'furry':       { id: 'BB95 Furry Mix v14', group: 'furry', label: 'BB95 Furry Mix v14' },
+  'novafurry':   { id: 'Nova Furry XL', group: 'furry', res: 'xl', label: 'Nova Furry XL' },
+  'yiff':        { id: "Lawlas's yiff mix", group: 'furry', label: "Lawlas's yiff mix" },
+
+  // ── Eksperimental / cepat ──
+  'flux':        { id: 'Flux.1-Schnell fp8 (Compact)', group: 'exp', label: 'FLUX.1 Schnell fp8' },
+  'krea':        { id: 'Krea2-Turbo_fp8', group: 'exp', label: 'Krea2 Turbo fp8' },
+  'zturbo':      { id: 'Z-Image-Turbo', group: 'exp', label: 'Z-Image Turbo' },
+  'sdbase':      { id: 'stable_diffusion', group: 'exp', label: 'Stable Diffusion 1.5 (base)' },
 };
+
+const HORDE_MODEL_GROUPS = [
+  { key: 'anime',   name: 'Anime (murah, cepat)' },
+  { key: 'animexl', name: 'Anime XL/Pony (kualitas, mahal)' },
+  { key: 'real',    name: 'Realistis' },
+  { key: 'furry',   name: 'Furry' },
+  { key: 'exp',     name: 'Eksperimental / cepat' },
+];
 
 const HORDE_DEFAULT_MODEL = 'abyss';
 
@@ -1036,6 +1093,28 @@ const HORDE_SIZES = {
 };
 
 const HORDE_DEFAULT_SIZE = 'square';
+const HORDE_DEFAULT_STEPS = 20;
+const HORDE_MIN_STEPS = 8;
+const HORDE_MAX_STEPS = 40;
+
+// Perkiraan biaya kudos horde ≈ (lebar * tinggi * steps) / 1e6
+function estimateHordeKudos(width, height, steps) {
+  return Math.max(1, Math.ceil((width * height * steps) / 1000000));
+}
+
+// Model XL pecah kalau resolusi kecil — skala 1.5x, bulatkan ke kelipatan 64
+function scaleHordeSize(width, height, scale) {
+  if (!scale || scale === 1) return { width, height };
+  const round64 = (n) => Math.max(64, Math.round((n * scale) / 64) * 64);
+  return { width: round64(width), height: round64(height) };
+}
+
+function formatHordeModelList() {
+  return HORDE_MODEL_GROUPS.map((g) => {
+    const keys = Object.keys(HORDE_MODELS).filter((k) => HORDE_MODELS[k].group === g.key);
+    return `${g.name}: ${keys.join(', ')}`;
+  }).join('\n    ');
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1088,7 +1167,8 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
     queueLine = '⏳ Mencari posisi antrean...';
   }
 
-  const header = `🎨 Generating gambar... (AI Horde, model: \`${modelKey}\`, size: \`${sizeKey}\`)`;
+  const label = HORDE_MODELS[modelKey] ? HORDE_MODELS[modelKey].label : modelKey;
+  const header = `🎨 Generating gambar... (AI Horde, model: \`${label}\`, size: \`${sizeKey}\`)`;
   const elapsed = typeof info.elapsedSec === 'number' ? `\n📈 Sudah menunggu: ${formatElapsed(info.elapsedSec)}` : '';
   const promptLine = `\nPrompt: \`${prompt.slice(0, 200)}\``;
   try {
@@ -1105,9 +1185,12 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
  * onStatus(info) dipanggil tiap poll: { queuePosition, processing, waitTimeSec, elapsedSec }.
  * Returns { buffer, contentType, modelId }.
  */
-async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE, onStatus = null) {
+async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE, onStatus = null, steps = HORDE_DEFAULT_STEPS) {
   const model = HORDE_MODELS[modelKey] || HORDE_MODELS[HORDE_DEFAULT_MODEL];
-  const size = HORDE_SIZES[sizeKey] || HORDE_SIZES[HORDE_DEFAULT_SIZE];
+  const baseSize = HORDE_SIZES[sizeKey] || HORDE_SIZES[HORDE_DEFAULT_SIZE];
+  const size = scaleHordeSize(baseSize.width, baseSize.height, model.res === 'xl' ? 1.5 : 1);
+  const stepCount = Math.min(HORDE_MAX_STEPS, Math.max(HORDE_MIN_STEPS, Number(steps) || HORDE_DEFAULT_STEPS));
+  const kudosCost = estimateHordeKudos(size.width, size.height, stepCount);
   const apiKey = config.hordeApiKey || '0000000000';
   const timeoutMs = config.hordeTimeoutMs || 600000;
   const authHeaders = { apikey: apiKey, 'Content-Type': 'application/json' };
@@ -1115,7 +1198,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
   // 1) Submit job ke antrean
   const payload = {
     prompt,
-    params: { width: size.width, height: size.height, steps: 20, sampler_name: 'k_euler', cfg_scale: 7 },
+    params: { width: size.width, height: size.height, steps: stepCount, sampler_name: 'k_euler', cfg_scale: 7 },
     models: [model.id],
     nsfw: true,
   };
@@ -1160,7 +1243,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
         const gen = statusData.generations && statusData.generations[0];
         if (!gen || !gen.img) throw new Error('Horde: selesai tapi tidak ada gambar di hasil.');
         const buffer = Buffer.from(gen.img, 'base64');
-        return { buffer, contentType: 'image/jpeg', modelId: model.id };
+        return { buffer, contentType: 'image/jpeg', modelId: model.id, kudos: kudosCost, width: size.width, height: size.height };
       }
       if (typeof onStatus === 'function') {
         try {
@@ -1179,7 +1262,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
 }
 
 async function handleGenCommand(message, args, config) {
-  // Parse flags: --provider <pollinations|horde> | --horde, --model <name>, --size <name>
+  // Parse flags: --provider <pollinations|horde> | --horde, --model <name>, --size <name>, --steps <n>
   let provider = 'pollinations';
   const argsCopy = [...args];
 
@@ -1207,14 +1290,15 @@ async function handleGenCommand(message, args, config) {
 
   let modelKey = DEFAULT_MODEL;
   let sizeKey = DEFAULT_SIZE;
+  let steps = HORDE_DEFAULT_STEPS;
 
   const modelFlagIdx = argsCopy.indexOf('--model');
   if (modelFlagIdx !== -1 && argsCopy[modelFlagIdx + 1]) {
     modelKey = argsCopy[modelFlagIdx + 1].toLowerCase();
     argsCopy.splice(modelFlagIdx, 2);
     if (!MODELS[modelKey]) {
-      const validKeys = Object.keys(MODELS).join(', ');
-      await safeReply(message, `❌ Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}): ${validKeys}`);
+      const validKeys = isHorde ? formatHordeModelList() : Object.keys(MODELS).join(', ');
+      await safeReply(message, `❌ Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}):\n    ${validKeys}`);
       return;
     }
   }
@@ -1230,6 +1314,18 @@ async function handleGenCommand(message, args, config) {
     }
   }
 
+  // --steps (khusus horde) — Fewer steps = kudos lebih hemat
+  const stepsFlagIdx = argsCopy.indexOf('--steps');
+  if (stepsFlagIdx !== -1 && argsCopy[stepsFlagIdx + 1]) {
+    const rawSteps = Number(argsCopy[stepsFlagIdx + 1]);
+    argsCopy.splice(stepsFlagIdx, 2);
+    if (!Number.isFinite(rawSteps) || rawSteps < HORDE_MIN_STEPS || rawSteps > HORDE_MAX_STEPS) {
+      await safeReply(message, `❌ Nilai --steps harus angka ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}).\nLebih sedikit steps = kudos lebih hemat, kualitas turun sedikit.`);
+      return;
+    }
+    steps = Math.round(rawSteps);
+  }
+
   const prompt = argsCopy.join(' ').trim();
   if (!prompt) {
     await safeReply(message, `❌ Berikan prompt untuk generate gambar.\nContoh: \`b.gen a beautiful anime girl\``);
@@ -1237,11 +1333,16 @@ async function handleGenCommand(message, args, config) {
   }
 
   const providerLabel = isHorde ? 'AI Horde' : 'Pollinations';
+  const modelDef = isHorde ? (HORDE_MODELS[modelKey] || {}) : {};
+  // Hitung dulu biar user tahu berapa kudos yang bakal terpakai
+  const effSize = isHorde ? scaleHordeSize(HORDE_SIZES[sizeKey].width, HORDE_SIZES[sizeKey].height, modelDef.res === 'xl' ? 1.5 : 1) : null;
+  const kudosInfo = isHorde ? ` | ~${estimateHordeKudos(effSize.width, effSize.height, steps)} kudos | steps: ${steps}` : '';
+  const resInfo = isHorde && effSize ? `\n🖼️ Resolusi: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
 
   // Status "generating..."
   let statusMsg;
   try {
-    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`)\nPrompt: \`${prompt.slice(0, 200)}\`${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}`);
+    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}`);
   } catch (_) {}
 
   try {
@@ -1251,10 +1352,11 @@ async function handleGenCommand(message, args, config) {
       provider,
       model: modelKey,
       size: sizeKey,
+      steps: isHorde ? steps : undefined,
     });
 
     const result = isHorde
-      ? await generateImageHorde(config, prompt, modelKey, sizeKey, (info) => updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey))
+      ? await generateImageHorde(config, prompt, modelKey, sizeKey, (info) => updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey), steps)
       : await generateImagePollinations(config, prompt, modelKey, sizeKey);
     const { buffer, contentType, modelId } = result;
 
@@ -1309,11 +1411,14 @@ function buildHelp(prefix) {
     `${prefix}nhgacha or ${prefix}nh [query] [--sort <popular|recent>] - random nhentai post (no query = random)`,
     `  examples: ${prefix}nhgacha doujinshi --sort popular`,
     `${prefix}gacha [query] - random gacha from any platform`,
-    `${prefix}gen <prompt> [--provider <pollinations|horde>] [--model <model>] [--size <size>] - generate AI image (gratis)`,
+    `${prefix}gen <prompt> [--provider <pollinations|horde>] [--model <model>] [--size <size>] [--steps <n>] - generate AI image (gratis)`,
     `  provider pollinations (default, instan, ada filter) | horde (NSFW bebas, antre ~5-15 mnt)`,
     `  pollinations models: ${Object.keys(POLLINATION_MODELS).join(', ')} | sizes: ${Object.keys(POLLINATION_SIZES).join(', ')}`,
-    `  horde models: ${Object.keys(HORDE_MODELS).join(', ')} | sizes: ${Object.keys(HORDE_SIZES).join(', ')}`,
+    `  horde sizes: ${Object.keys(HORDE_SIZES).join(', ')} | steps: ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}, makin kecil makin hemat kudos)`,
+    `  horde models (${Object.keys(HORDE_MODELS).length} pilihan, semua ada worker aktif):`,
+    `    ${formatHordeModelList()}`,
     `  examples: ${prefix}gen maid --provider horde --model abyss --size portrait`,
+    `  contoh XL (otomatis 768px, ~12 kudos): ${prefix}gen 1girl, cyberpunk --model wai --size portrait`,
     `  exclude tags: ${prefix}34gacha -ai_generated`,
     `  sort: ${prefix}34gacha sort:score`,
     `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
