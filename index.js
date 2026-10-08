@@ -13,14 +13,17 @@ const originalLookup = dns.lookup;
 
 async function resolveDoH(host) {
   try {
-    const res = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`);
+    const res = await fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`, {
+      signal: AbortSignal.timeout(3000)
+    });
     const data = await res.json();
     const aRecord = data.Answer?.find(ans => ans.type === 1);
     if (aRecord?.data) return aRecord.data;
   } catch (e) {
     try {
       const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
-        headers: { 'Accept': 'application/dns-json' }
+        headers: { 'Accept': 'application/dns-json' },
+        signal: AbortSignal.timeout(3000)
       });
       const data = await res.json();
       const aRecord = data.Answer?.find(ans => ans.type === 1);
@@ -502,6 +505,7 @@ async function getRandomNekopoiPost(config, query = '') {
       headers: {
         'User-Agent': config.userAgent,
       },
+      signal: AbortSignal.timeout(config.requestTimeoutMs || 10000),
     });
 
     if (!response.ok) {
@@ -576,12 +580,13 @@ async function getRandomNhentaiPost(config, query = '', sort = 'popular') {
     }
 }
 
-async function scrapeNekopoiDetails(pageUrl, userAgent) {
+async function scrapeNekopoiDetails(pageUrl, userAgent, timeoutMs = 8000) {
   try {
     const res = await fetch(pageUrl, {
       headers: {
         'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
+      },
+      signal: AbortSignal.timeout(timeoutMs)
     });
     
     if (!res.ok) return null;
@@ -612,7 +617,8 @@ async function scrapeNekopoiDetails(pageUrl, userAgent) {
           headers: {
             'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Referer': 'https://nekopoi.care/'
-          }
+          },
+          signal: AbortSignal.timeout(2500)
         });
         if (embedRes.ok) {
           const embedHtml = await embedRes.text();
@@ -647,7 +653,7 @@ async function scrapeNekopoiDetails(pageUrl, userAgent) {
           }
         }
       } catch (err) {
-        console.error("Error unpacking streampoi:", err.message);
+        console.warn("Streampoi unpack skipped/failed:", err.message);
       }
     }
     
@@ -825,7 +831,7 @@ function buildNhentaiEmbed(post) {
 
 async function sendNekopoiEmbed(message, post, config) {
   try {
-    const scraped = await scrapeNekopoiDetails(post.link, config?.userAgent);
+    const scraped = await scrapeNekopoiDetails(post.link, config?.userAgent, config?.requestTimeoutMs || 8000);
     const embed = buildNekopoiEmbed(post, scraped);
     await safeReplyWithEmbed(message, embed);
   } catch (error) {
