@@ -125,6 +125,9 @@ function normalizeConfig(config) {
   // Nuclear code for self-destruct: secret, only for Server Owner / Administrator.
   // Can be set via config.json ("nukePassword") or env NUKE_PASSWORD (safer).
   resolved.nukePassword = process.env.NUKE_PASSWORD || resolved.nukePassword || '';
+  resolved.purgePassword = process.env.PURGE_PASSWORD || resolved.purgePassword || '';
+  resolved.nukeCountdownSeconds = Number(resolved.nukeCountdownSeconds) > 0 ? Number(resolved.nukeCountdownSeconds) : 10;
+  resolved.purgeCountdownSeconds = Number(resolved.purgeCountdownSeconds) > 0 ? Number(resolved.purgeCountdownSeconds) : 10;
 
   if (!resolved.token || typeof resolved.token !== 'string') {
     throw new Error('config.json is missing "token".');
@@ -931,11 +934,15 @@ async function handleNhentaiCommand(message, query, config, sort = 'popular') {
 
 // ─── Pollinations Image Generation (free) ──────────────────────────────────
 
-const POLLINATIONS_HOST = 'gen.pollinations.ai';
+const POLLINATIONS_HOST = 'image.pollinations.ai';
 
 const POLLINATION_MODELS = {
   'flux': { id: 'flux', label: 'FLUX' },
-  'flux-schnell': { id: 'black-forest-labs/flux.1-schnell', label: 'FLUX.1 schnell' },
+  'flux-realism': { id: 'flux-realism', label: 'FLUX Realism' },
+  'flux-anime': { id: 'flux-anime', label: 'FLUX Anime' },
+  'flux-3d': { id: 'flux-3d', label: 'FLUX 3D' },
+  'any-dark': { id: 'any-dark', label: 'Any Dark' },
+  'turbo': { id: 'turbo', label: 'SDXL Turbo' },
   'sana': { id: 'sana', label: 'SANA' },
 };
 
@@ -943,10 +950,16 @@ const POLLINATION_DEFAULT_MODEL = 'flux';
 
 const POLLINATION_SIZES = {
   'square': { width: 1024, height: 1024 },
-  'portrait': { width: 832, height: 1216 },
-  'landscape': { width: 1216, height: 832 },
-  'wide': { width: 1344, height: 768 },
-  'tall': { width: 768, height: 1344 },
+  'portrait': { width: 768, height: 1024 },
+  'landscape': { width: 1280, height: 720 },
+  'wide': { width: 1280, height: 720 },
+  'tall': { width: 720, height: 1280 },
+  'phone': { width: 720, height: 1280 },
+  '1:1': { width: 1024, height: 1024 },
+  '3:4': { width: 768, height: 1024 },
+  '4:3': { width: 1024, height: 768 },
+  '16:9': { width: 1280, height: 720 },
+  '9:16': { width: 720, height: 1280 },
 };
 
 const POLLINATION_DEFAULT_SIZE = 'square';
@@ -997,24 +1010,34 @@ async function httpsRequestRaw(host, path, { headers = {}, method = 'GET', body 
 
 /**
  * Generate an image via the free Pollinations API:
- *   GET https://gen.pollinations.ai/image/{prompt}?model=..&width=..&height=..
+ *   GET https://image.pollinations.ai/prompt/{prompt}?model=..&width=..&height=..&nologo=true
  * Optional API key (config.pollinationsApiKey) for priority & paid models,
  * but this API runs FREE without a key.
  * Returns { buffer, contentType, modelId }.
  */
-async function generateImagePollinations(config, prompt, modelKey = POLLINATION_DEFAULT_MODEL, sizeKey = POLLINATION_DEFAULT_SIZE) {
+async function generateImagePollinations(config, prompt, modelKey = POLLINATION_DEFAULT_MODEL, sizeInput = POLLINATION_DEFAULT_SIZE, isFallback = false) {
   const model = POLLINATION_MODELS[modelKey] || POLLINATION_MODELS[POLLINATION_DEFAULT_MODEL];
-  const size = POLLINATION_SIZES[sizeKey] || POLLINATION_SIZES[POLLINATION_DEFAULT_SIZE];
+  const size = (typeof sizeInput === 'object' && sizeInput && sizeInput.width && sizeInput.height)
+    ? sizeInput
+    : (POLLINATION_SIZES[sizeInput] || POLLINATION_SIZES[POLLINATION_DEFAULT_SIZE]);
+
+  const hasApiKey = Boolean(config.pollinationsApiKey);
+  const host = hasApiKey ? 'gen.pollinations.ai' : 'image.pollinations.ai';
+  const endpoint = hasApiKey ? '/image' : '/prompt';
 
   const params = new URLSearchParams({
     model: model.id,
     width: String(size.width),
     height: String(size.height),
   });
-  if (config.pollinationsApiKey) params.set('key', config.pollinationsApiKey);
 
-  const path = `/image/${encodeURIComponent(prompt)}?${params.toString()}`;
-  const res = await httpsRequestRaw(POLLINATIONS_HOST, path, { timeoutMs: config.imageGenTimeoutMs });
+  const headers = {};
+  if (hasApiKey) {
+    headers['Authorization'] = `Bearer ${config.pollinationsApiKey}`;
+  }
+
+  const path = `${endpoint}/${encodeURIComponent(prompt)}?${params.toString()}`;
+  const res = await httpsRequestRaw(host, path, { headers, timeoutMs: config.imageGenTimeoutMs });
 
   if (res.statusCode !== 200) {
     let msg = '';
@@ -1023,16 +1046,27 @@ async function generateImagePollinations(config, prompt, modelKey = POLLINATION_
       msg = (parsed.error && (parsed.error.message || parsed.error.detail)) || parsed.detail || parsed.message || '';
     } catch (_) {}
     if (!msg) msg = res.buffer.toString().slice(0, 200);
+
+    // If a non-default model failed (e.g. upstream 429 rate limit or 500), auto-fallback to flux
+    if (modelKey !== POLLINATION_DEFAULT_MODEL && !isFallback) {
+      console.warn(`Pollinations model ${modelKey} failed (${res.statusCode}), falling back to ${POLLINATION_DEFAULT_MODEL}...`);
+      return generateImagePollinations(config, prompt, POLLINATION_DEFAULT_MODEL, size, true);
+    }
+
     throw new Error(`Pollinations error ${res.statusCode}: ${msg}`);
   }
 
   const contentType = res.headers['content-type'] || 'image/jpeg';
   if (!contentType.startsWith('image/')) {
+    if (modelKey !== POLLINATION_DEFAULT_MODEL && !isFallback) {
+      return generateImagePollinations(config, prompt, POLLINATION_DEFAULT_MODEL, size, true);
+    }
     // Pollinations sometimes returns text/JSON even on HTTP 200 (e.g. prompt rejected by content filter)
     throw new Error(`Pollinations did not return an image (${contentType}): ${res.buffer.toString().slice(0, 200)}`);
   }
 
-  return { buffer: res.buffer, contentType, modelId: model.id };
+  const label = isFallback ? `${model.id} (fallback)` : model.id;
+  return { buffer: res.buffer, contentType, modelId: label };
 }
 
 // ─── AI Horde Image Generation (free, NSFW, queued) ──────────────────────────
@@ -1057,6 +1091,7 @@ const HORDE_MODELS = {
 
   // ── Anime XL / Pony / Illustrious — highest quality, more expensive ──
   'wai':         { id: 'WAI-NSFW-illustrious-SDXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Illustrious SDXL' },
+  'illustrious': { id: 'WAI-NSFW-illustrious-SDXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Illustrious SDXL' },
   'waipony':     { id: 'WAI-ANI-NSFW-PONYXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Pony XL' },
   'nova':        { id: 'Nova Anime XL', group: 'animexl', res: 'xl', label: 'Nova Anime XL' },
   'hassaku':     { id: 'Hassaku XL', group: 'animexl', res: 'xl', label: 'Hassaku XL' },
@@ -1108,8 +1143,16 @@ const HORDE_DEFAULT_MODEL = 'abyss';
 
 const HORDE_SIZES = {
   'square': { width: 512, height: 512 },
-  'landscape': { width: 768, height: 512 },
-  'portrait': { width: 512, height: 768 },
+  'portrait': { width: 576, height: 768 },
+  'landscape': { width: 768, height: 448 },
+  'wide': { width: 768, height: 448 },
+  'tall': { width: 448, height: 768 },
+  'phone': { width: 448, height: 768 },
+  '1:1': { width: 512, height: 512 },
+  '3:4': { width: 576, height: 768 },
+  '4:3': { width: 768, height: 576 },
+  '16:9': { width: 768, height: 448 },
+  '9:16': { width: 448, height: 768 },
 };
 
 const HORDE_DEFAULT_SIZE = 'square';
@@ -1198,6 +1241,31 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
   }
 }
 
+function detectImageContentType(buffer) {
+  if (!buffer || buffer.length < 12) return 'image/jpeg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  if (buffer.slice(0, 3).toString('ascii') === 'GIF') {
+    return 'image/gif';
+  }
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  return 'image/jpeg';
+}
+
+function getImageExtension(contentType) {
+  if (!contentType) return 'jpg';
+  if (contentType.includes('webp')) return 'webp';
+  if (contentType.includes('png')) return 'png';
+  if (contentType.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
 /**
  * Generate an image via AI Horde (free community GPU network, NSFW-friendly).
  * Anonymous (empty hordeApiKey / key "0000000000") is given lowest priority
@@ -1205,9 +1273,11 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
  * onStatus(info) is called on each poll: { queuePosition, processing, waitTimeSec, elapsedSec }.
  * Returns { buffer, contentType, modelId }.
  */
-async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE, onStatus = null, steps = HORDE_DEFAULT_STEPS) {
+async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeInput = HORDE_DEFAULT_SIZE, onStatus = null, steps = HORDE_DEFAULT_STEPS, retriesLeft = 1) {
   const model = HORDE_MODELS[modelKey] || HORDE_MODELS[HORDE_DEFAULT_MODEL];
-  const baseSize = HORDE_SIZES[sizeKey] || HORDE_SIZES[HORDE_DEFAULT_SIZE];
+  const baseSize = (typeof sizeInput === 'object' && sizeInput && sizeInput.width && sizeInput.height)
+    ? sizeInput
+    : (HORDE_SIZES[sizeInput] || HORDE_SIZES[HORDE_DEFAULT_SIZE]);
   const size = scaleHordeSize(baseSize.width, baseSize.height, model.res === 'xl' ? 1.5 : 1);
   const stepCount = Math.min(HORDE_MAX_STEPS, Math.max(HORDE_MIN_STEPS, Number(steps) || HORDE_DEFAULT_STEPS));
   const kudosCost = estimateHordeKudos(size.width, size.height, stepCount);
@@ -1221,6 +1291,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
     params: { width: size.width, height: size.height, steps: stepCount, sampler_name: 'k_euler', cfg_scale: 7 },
     models: [model.id],
     nsfw: true,
+    censor_nsfw: false,
   };
   const submit = await httpsRequestRaw(HORDE_HOST, '/api/v2/generate/async', {
     method: 'POST',
@@ -1262,8 +1333,35 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
       if (statusData.done) {
         const gen = statusData.generations && statusData.generations[0];
         if (!gen || !gen.img) throw new Error('Horde: completed but no image in result.');
-        const buffer = Buffer.from(gen.img, 'base64');
-        return { buffer, contentType: 'image/jpeg', modelId: model.id, kudos: kudosCost, width: size.width, height: size.height };
+
+        let isCensored = Boolean(gen.censored);
+        let buffer;
+        if (typeof gen.img === 'string' && (gen.img.startsWith('http://') || gen.img.startsWith('https://'))) {
+          const imgUrl = new URL(gen.img);
+          const dlRes = await httpsRequestRaw(imgUrl.host, imgUrl.pathname + imgUrl.search, { timeoutMs: 30000 });
+          if (dlRes.statusCode !== 200) {
+            throw new Error(`Horde: failed to download image from storage (${dlRes.statusCode}).`);
+          }
+          buffer = dlRes.buffer;
+        } else {
+          buffer = Buffer.from(gen.img, 'base64');
+        }
+
+        // Worker censor check: a black placeholder image is tiny (< 2KB)
+        if (buffer.length < 2000) {
+          isCensored = true;
+        }
+
+        if (isCensored) {
+          if (retriesLeft > 0) {
+            console.warn(`Horde worker returned black/censored image for ${modelKey}. Retrying with another worker...`);
+            return generateImageHorde(config, prompt, modelKey, sizeInput, onStatus, steps, retriesLeft - 1);
+          }
+          throw new Error('Horde: Worker node replaced the image with a black screen (safety filter triggered by worker). Please re-run or try another model.');
+        }
+
+        const contentType = detectImageContentType(buffer);
+        return { buffer, contentType, modelId: model.id, kudos: kudosCost, width: size.width, height: size.height };
       }
       if (typeof onStatus === 'function') {
         try {
@@ -1283,7 +1381,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
 
 async function handleGenCommand(message, args, config) {
   // Parse flags: --provider <pollinations|horde> | --horde, --model <name>, --size <name>, --steps <n>
-  let provider = 'pollinations';
+  let provider = null;
   const argsCopy = [...args];
 
   const providerFlagIdx = argsCopy.indexOf('--provider');
@@ -1297,6 +1395,24 @@ async function handleGenCommand(message, args, config) {
     argsCopy.splice(hordeFlagIdx, 1);
   }
 
+  let modelKey = null;
+  const modelFlagIdx = argsCopy.indexOf('--model');
+  if (modelFlagIdx !== -1 && argsCopy[modelFlagIdx + 1]) {
+    modelKey = argsCopy[modelFlagIdx + 1].toLowerCase();
+    argsCopy.splice(modelFlagIdx, 2);
+  }
+
+  // Auto-detect provider from model if not explicitly specified
+  if (!provider) {
+    if (modelKey && HORDE_MODELS[modelKey]) {
+      provider = 'horde';
+    } else if (modelKey && POLLINATION_MODELS[modelKey]) {
+      provider = 'pollinations';
+    } else {
+      provider = 'pollinations'; // default
+    }
+  }
+
   const isHorde = provider === 'horde';
   if (provider !== 'pollinations' && provider !== 'horde') {
     await safeReply(message, `Provider not recognized: \`${provider}\`\nAvailable: pollinations (default, instant) | horde (NSFW free, queue).\nContoh: \`b.gen maid seductive --provider horde\``);
@@ -1308,30 +1424,49 @@ async function handleGenCommand(message, args, config) {
   const SIZES = isHorde ? HORDE_SIZES : POLLINATION_SIZES;
   const DEFAULT_SIZE = isHorde ? HORDE_DEFAULT_SIZE : POLLINATION_DEFAULT_SIZE;
 
-  let modelKey = DEFAULT_MODEL;
   let sizeKey = DEFAULT_SIZE;
   let steps = HORDE_DEFAULT_STEPS;
 
-  const modelFlagIdx = argsCopy.indexOf('--model');
-  if (modelFlagIdx !== -1 && argsCopy[modelFlagIdx + 1]) {
-    modelKey = argsCopy[modelFlagIdx + 1].toLowerCase();
-    argsCopy.splice(modelFlagIdx, 2);
-    if (!MODELS[modelKey]) {
-      const validKeys = isHorde ? formatHordeModelList() : Object.keys(MODELS).join(', ');
-      await safeReply(message, `Model not recognized: \`${modelKey}\`\nAvailable models (${provider}):\n    ${validKeys}`);
-      return;
+  if (!modelKey) {
+    modelKey = DEFAULT_MODEL;
+  } else if (!MODELS[modelKey]) {
+    const otherProvider = isHorde ? 'pollinations' : 'horde';
+    const otherModels = isHorde ? POLLINATION_MODELS : HORDE_MODELS;
+    let hint = '';
+    if (otherModels[modelKey]) {
+      hint = `\n\n*Note: Model \`${modelKey}\` is available on provider **${otherProvider}**. Use \`--provider ${otherProvider}\` or omit the flag to auto-select.*`;
     }
+    const validKeys = isHorde ? formatHordeModelList() : Object.keys(MODELS).join(', ');
+    await safeReply(message, `Model not recognized: \`${modelKey}\`\nAvailable models (${provider}):\n    ${validKeys}${hint}`);
+    return;
   }
 
   const sizeFlagIdx = argsCopy.indexOf('--size');
+  let customSize = null;
   if (sizeFlagIdx !== -1 && argsCopy[sizeFlagIdx + 1]) {
-    sizeKey = argsCopy[sizeFlagIdx + 1].toLowerCase();
+    const rawSize = argsCopy[sizeFlagIdx + 1].toLowerCase();
     argsCopy.splice(sizeFlagIdx, 2);
-    if (!SIZES[sizeKey]) {
-      const validSizes = Object.keys(SIZES).join(', ');
-      await safeReply(message, `Size not recognized: \`${sizeKey}\`\nAvailable sizes (${provider}): ${validSizes}`);
+
+    const dimMatch = rawSize.match(/^(\d{2,4})x(\d{2,4})$/);
+    if (dimMatch) {
+      let w = Math.min(2048, Math.max(128, Number(dimMatch[1])));
+      let h = Math.min(2048, Math.max(128, Number(dimMatch[2])));
+      if (isHorde) {
+        w = Math.max(64, Math.round(w / 64) * 64);
+        h = Math.max(64, Math.round(h / 64) * 64);
+      }
+      customSize = { width: w, height: h };
+      sizeKey = `${w}x${h}`;
+    } else if (SIZES[rawSize]) {
+      sizeKey = rawSize;
+      customSize = SIZES[rawSize];
+    } else {
+      const validSizes = 'square (1:1), portrait (3:4), landscape/wide (16:9), tall/phone (9:16), or custom <width>x<height>';
+      await safeReply(message, `Size not recognized: \`${rawSize}\`\nAvailable sizes: ${validSizes}`);
       return;
     }
+  } else {
+    customSize = SIZES[DEFAULT_SIZE];
   }
 
   // --steps (horde only) — Fewer steps = less kudos used
@@ -1355,9 +1490,9 @@ async function handleGenCommand(message, args, config) {
   const providerLabel = isHorde ? 'AI Horde' : 'Pollinations';
   const modelDef = isHorde ? (HORDE_MODELS[modelKey] || {}) : {};
   // Calculate first so user knows how many kudos will be used
-  const effSize = isHorde ? scaleHordeSize(HORDE_SIZES[sizeKey].width, HORDE_SIZES[sizeKey].height, modelDef.res === 'xl' ? 1.5 : 1) : null;
+  const effSize = isHorde ? scaleHordeSize(customSize.width, customSize.height, modelDef.res === 'xl' ? 1.5 : 1) : customSize;
   const kudosInfo = isHorde ? ` | ~${estimateHordeKudos(effSize.width, effSize.height, steps)} kudos | steps: ${steps}` : '';
-  const resInfo = isHorde && effSize ? `\nResolution: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
+  const resInfo = `\nResolution: ${effSize.width}×${effSize.height}${isHorde && modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}`;
 
   // If channel not Age Restricted, Discord auto-scans & blocks NSFW media
   // (image becomes a 97-byte placeholder, attachment dropped). Warn upfront.
@@ -1383,11 +1518,11 @@ async function handleGenCommand(message, args, config) {
     });
 
     const result = isHorde
-      ? await generateImageHorde(config, prompt, modelKey, sizeKey, (info) => updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey), steps)
-      : await generateImagePollinations(config, prompt, modelKey, sizeKey);
+      ? await generateImageHorde(config, prompt, modelKey, customSize, (info) => updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey), steps)
+      : await generateImagePollinations(config, prompt, modelKey, customSize);
     const { buffer, contentType, modelId } = result;
 
-    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : 'jpg';
+    const ext = getImageExtension(contentType);
     const filename = `generated.${ext}`;
 
     const embed = new EmbedBuilder()
@@ -1423,7 +1558,11 @@ async function handleGenCommand(message, args, config) {
   } catch (error) {
     logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'error', message: error.message });
     console.error('Image generation error:', error);
-    await safeReply(message, `Failed to generate image: ${error.message}`);
+    let userMsg = error.message;
+    if (userMsg.includes('community_model_rate_limit') || userMsg.includes('429')) {
+      userMsg = 'Model is currently rate-limited upstream. Please try again in a moment or use another model (e.g. `flux`).';
+    }
+    await safeReply(message, `Failed to generate image: ${userMsg}`);
   } finally {
     if (statusMsg) {
       try { await statusMsg.delete(); } catch (_) {}
@@ -1484,11 +1623,9 @@ function buildHelp(prefix, botUser = null) {
       {
         name: 'Parameters for `b.gen`',
         value:
-          `- \`--provider <pollinations|horde>\` — Select AI provider\n` +
+          `- \`--provider <pollinations|horde>\` — Select AI provider *(auto-detected from model)*\n` +
           `- \`--model <model>\` — Select generator model *(see list below)*\n` +
-          `- \`--size <size>\` — Image dimensions:\n` +
-          `  ↳ *Pollinations:* ${pollinationsSizes}\n` +
-          `  ↳ *Horde:* ${hordeSizes}\n` +
+          `- \`--size <size>\` — Preset ratios: \`square\` (1:1), \`portrait\` (3:4), \`landscape\` / \`wide\` (16:9), \`tall\` (9:16), or custom \`<width>x<height>\` (e.g. \`1920x1080\`)\n` +
           `- \`--steps <${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS}>\` — Horde sampling steps *(default: ${HORDE_DEFAULT_STEPS})*`,
       },
       {
@@ -1667,8 +1804,8 @@ async function notifyNukeSession(session, text) {
   }
 }
 
-// Step 1: `b.nuke` — request nuclear code via DM.
-async function handleNukeStart(message, config) {
+// Step 1: `b.nuke [seconds]` — request nuclear code via DM.
+async function handleNukeStart(message, args, config) {
   const guild = message.guild;
 
   const isGuildOwner = guild.ownerId === message.author.id;
@@ -1691,6 +1828,17 @@ async function handleNukeStart(message, config) {
     return;
   }
 
+  let countdownSeconds = Number(config.nukeCountdownSeconds) > 0 ? Number(config.nukeCountdownSeconds) : NUKE_COUNTDOWN_SECONDS;
+  if (args && args.length > 0) {
+    const rawSec = parseInt(args[0], 10);
+    if (!isNaN(rawSec) && rawSec >= 1 && rawSec <= 300) {
+      countdownSeconds = rawSec;
+    } else {
+      await safeReply(message, 'Countdown must be between 1 and 300 seconds. Example: `b.nuke 15`');
+      return;
+    }
+  }
+
   const existing = nukeSessions.get(message.author.id);
   if (existing) clearNukeSession(existing);
 
@@ -1699,6 +1847,7 @@ async function handleNukeStart(message, config) {
     guildId: guild.id,
     guildName: guild.name,
     channelId: message.channelId,
+    countdownSeconds,
     stage: 'awaiting_password',
     attempts: 0,
     timer: null,
@@ -1710,18 +1859,19 @@ async function handleNukeStart(message, config) {
   logInteraction('nuke_init', {
     user: { id: message.author.id, username: message.author.username },
     guild: { id: guild.id, name: guild.name },
+    countdownSeconds,
   });
 
   await safeReply(
     message,
-    '**Self-destruct initiated.**\n' +
+    `**Self-destruct initiated (countdown: ${countdownSeconds}s).**\n` +
       'For verification, send the **nuclear code** to this **bot\'s DM**.\n' +
       'Session expires in 2 minutes.'
   );
 
   try {
     await message.author.send(
-      'Enter your **nuclear code** to confirm self-destruct.\n' +
+      `Enter your **nuclear code** to confirm self-destruct (${countdownSeconds}s countdown).\n` +
         'This message will be deleted automatically for security.'
     );
   } catch (error) {
@@ -1784,6 +1934,8 @@ async function handleNukeDm(message, config) {
   session.stage = 'awaiting_confirm';
   scheduleNukeExpiry(session, NUKE_SESSION_TTL_MS);
 
+  const countdown = session.countdownSeconds || NUKE_COUNTDOWN_SECONDS;
+
   logInteraction('nuke_password_ok', {
     user: { id: message.author.id, username: message.author.username },
     guild: { id: session.guildId, name: session.guildName },
@@ -1793,13 +1945,13 @@ async function handleNukeDm(message, config) {
     .send(
       '**Nuclear code CORRECT.**\n' +
         'Return to the server and confirm: **Are you sure you want to destroy this server?**\n' +
-        `Run \`b.nuke confirm\` within 2 minutes to start the ${NUKE_COUNTDOWN_SECONDS}-second countdown.`
+        `Run \`b.nuke confirm\` within 2 minutes to start the ${countdown}-second countdown.`
     )
     .catch(() => {});
 
   await notifyNukeSession(
     session,
-    `<@${message.author.id}> — nuclear code **CORRECT**.\n**Are you sure you want to destroy this server?**\nRun \`b.nuke confirm\` within 2 minutes to start the ${NUKE_COUNTDOWN_SECONDS}-second countdown.`
+    `<@${message.author.id}> — nuclear code **CORRECT**.\n**Are you sure you want to destroy this server?**\nRun \`b.nuke confirm\` within 2 minutes to start the ${countdown}-second countdown.`
   );
 }
 
@@ -1841,7 +1993,7 @@ async function handleNukeConfirm(message, config) {
     guild: { id: session.guildId, name: session.guildName },
   });
 
-  let remaining = NUKE_COUNTDOWN_SECONDS;
+  let remaining = session.countdownSeconds || Number(config.nukeCountdownSeconds) || NUKE_COUNTDOWN_SECONDS;
   const statusMsg = await message.reply(
     `**Self-destruct starting in ${remaining} seconds.**\nCancel with \`b.nuke abort\`.`
   );
@@ -2058,15 +2210,27 @@ async function handlePurgeStart(message, args, config) {
     return;
   }
 
-  // Parse message count
+  // Parse message count and optional countdown seconds
+  // Format: b.purge <count> [seconds]
   const countArg = args[0];
   const count = parseInt(countArg, 10);
   if (!countArg || isNaN(count) || count < 1 || count > PURGE_MAX_MESSAGES) {
     await safeReply(
       message,
-      `Format: \`b.purge <1-${PURGE_MAX_MESSAGES}>\` — number of messages to delete.`
+      `Format: \`b.purge <1-${PURGE_MAX_MESSAGES}> [countdown_seconds]\` — example: \`b.purge 50 15\``
     );
     return;
+  }
+
+  let countdownSeconds = Number(config.purgeCountdownSeconds) > 0 ? Number(config.purgeCountdownSeconds) : PURGE_COUNTDOWN_SECONDS;
+  if (args[1]) {
+    const rawSec = parseInt(args[1], 10);
+    if (!isNaN(rawSec) && rawSec >= 1 && rawSec <= 300) {
+      countdownSeconds = rawSec;
+    } else {
+      await safeReply(message, 'Countdown must be between 1 and 300 seconds. Example: `b.purge 50 15`');
+      return;
+    }
   }
 
   const existing = purgeSessions.get(message.author.id);
@@ -2078,6 +2242,7 @@ async function handlePurgeStart(message, args, config) {
     guildName: guild.name,
     channelId: message.channelId,
     count,
+    countdownSeconds,
     stage: 'awaiting_password',
     attempts: 0,
     timer: null,
@@ -2090,18 +2255,19 @@ async function handlePurgeStart(message, args, config) {
     user: { id: message.author.id, username: message.author.username },
     guild: { id: guild.id, name: guild.name },
     count,
+    countdownSeconds,
   });
 
   await safeReply(
     message,
-    `**Purge of ${count} messages initiated.**\n` +
+    `**Purge of ${count} messages initiated (countdown: ${countdownSeconds}s).**\n` +
       'For verification, send the **purge code** to this **bot\'s DM**.\n' +
       'Session expires in 2 minutes.'
   );
 
   try {
     await message.author.send(
-      `Enter the **purge code** to confirm deletion of ${count} messages.\n` +
+      `Enter the **purge code** to confirm deletion of ${count} messages (${countdownSeconds}s countdown).\n` +
         'This message will be deleted automatically for security.'
     );
   } catch (error) {
@@ -2161,6 +2327,8 @@ async function handlePurgeDm(message, config) {
   session.stage = 'awaiting_confirm';
   schedulePurgeExpiry(session, PURGE_SESSION_TTL_MS);
 
+  const countdown = session.countdownSeconds || PURGE_COUNTDOWN_SECONDS;
+
   logInteraction('purge_password_ok', {
     user: { id: message.author.id, username: message.author.username },
     guild: { id: session.guildId, name: session.guildName },
@@ -2171,13 +2339,13 @@ async function handlePurgeDm(message, config) {
     .send(
       `**Purge code CORRECT.**\n` +
         `Return to the server and confirm: **Are you sure you want to delete the last ${session.count} messages?**\n` +
-        `Run \`b.purge confirm\` within 2 minutes to start the ${PURGE_COUNTDOWN_SECONDS}-second countdown.`
+        `Run \`b.purge confirm\` within 2 minutes to start the ${countdown}-second countdown.`
     )
     .catch(() => {});
 
   await notifyPurgeSession(
     session,
-    `<@${message.author.id}> — purge code **CORRECT**.\n**Are you sure you want to delete the last ${session.count} messages?**\nRun \`b.purge confirm\` within 2 minutes to start the ${PURGE_COUNTDOWN_SECONDS}-second countdown.`
+    `<@${message.author.id}> — purge code **CORRECT**.\n**Are you sure you want to delete the last ${session.count} messages?**\nRun \`b.purge confirm\` within 2 minutes to start the ${countdown}-second countdown.`
   );
 }
 
@@ -2220,7 +2388,7 @@ async function handlePurgeConfirm(message, config) {
     count: session.count,
   });
 
-  let remaining = PURGE_COUNTDOWN_SECONDS;
+  let remaining = session.countdownSeconds || Number(config.purgeCountdownSeconds) || PURGE_COUNTDOWN_SECONDS;
   const statusMsg = await message.reply(
     `**Purge of ${session.count} messages starting in ${remaining} seconds.**\nCancel with \`b.purge abort\`.`
   );
@@ -2499,11 +2667,7 @@ async function main() {
           await handleNukeAbort(message);
           return;
         }
-        if (rest.length > 0) {
-          await safeReply(message, 'Format: `b.nuke` (start) | `b.nuke confirm` | `b.nuke abort`.');
-          return;
-        }
-        await handleNukeStart(message, config);
+        await handleNukeStart(message, rest, config);
         return;
       }
 
