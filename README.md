@@ -15,7 +15,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
   - `b.34gacha rating:safe` (also `rating:questionable`, `rating:explicit`)
 - Other Rule34 tag operators/filters are passed through as-is.
 
-## ⚠️ Self-Destruct (Nuke)
+## Self-Destruct (Nuke)
 
 Emergency command that deletes **all channels** (including all messages) and **all deletable roles** in the server. Protected by multiple layers:
 
