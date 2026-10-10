@@ -126,8 +126,8 @@ function normalizeConfig(config) {
   // Can be set via config.json ("nukePassword") or env NUKE_PASSWORD (safer).
   resolved.nukePassword = process.env.NUKE_PASSWORD || resolved.nukePassword || '';
   resolved.purgePassword = process.env.PURGE_PASSWORD || resolved.purgePassword || '';
-  resolved.nukeCountdownSeconds = Number(resolved.nukeCountdownSeconds) > 0 ? Number(resolved.nukeCountdownSeconds) : 10;
-  resolved.purgeCountdownSeconds = Number(resolved.purgeCountdownSeconds) > 0 ? Number(resolved.purgeCountdownSeconds) : 10;
+  resolved.nukeCountdownSeconds = Number.isFinite(Number(resolved.nukeCountdownSeconds)) && Number(resolved.nukeCountdownSeconds) >= 0 ? Number(resolved.nukeCountdownSeconds) : 10;
+  resolved.purgeCountdownSeconds = Number.isFinite(Number(resolved.purgeCountdownSeconds)) && Number(resolved.purgeCountdownSeconds) >= 0 ? Number(resolved.purgeCountdownSeconds) : 10;
 
   if (!resolved.token || typeof resolved.token !== 'string') {
     throw new Error('config.json is missing "token".');
@@ -1828,13 +1828,13 @@ async function handleNukeStart(message, args, config) {
     return;
   }
 
-  let countdownSeconds = Number(config.nukeCountdownSeconds) > 0 ? Number(config.nukeCountdownSeconds) : NUKE_COUNTDOWN_SECONDS;
+  let countdownSeconds = Number.isFinite(Number(config.nukeCountdownSeconds)) && Number(config.nukeCountdownSeconds) >= 0 ? Number(config.nukeCountdownSeconds) : NUKE_COUNTDOWN_SECONDS;
   if (args && args.length > 0) {
     const rawSec = parseInt(args[0], 10);
-    if (!isNaN(rawSec) && rawSec >= 1 && rawSec <= 300) {
+    if (!isNaN(rawSec) && rawSec >= 0 && rawSec <= 300) {
       countdownSeconds = rawSec;
     } else {
-      await safeReply(message, 'Countdown must be between 1 and 300 seconds. Example: `b.nuke 15`');
+      await safeReply(message, 'Countdown must be between 0 and 300 seconds (0 = instant / no countdown). Example: `b.nuke 0`');
       return;
     }
   }
@@ -1862,16 +1862,18 @@ async function handleNukeStart(message, args, config) {
     countdownSeconds,
   });
 
+  const countdownText = countdownSeconds === 0 ? 'no countdown (instant)' : `countdown: ${countdownSeconds}s`;
+
   await safeReply(
     message,
-    `**Self-destruct initiated (countdown: ${countdownSeconds}s).**\n` +
+    `**Self-destruct initiated (${countdownText}).**\n` +
       'For verification, send the **nuclear code** to this **bot\'s DM**.\n' +
       'Session expires in 2 minutes.'
   );
 
   try {
     await message.author.send(
-      `Enter your **nuclear code** to confirm self-destruct (${countdownSeconds}s countdown).\n` +
+      `Enter your **nuclear code** to confirm self-destruct (${countdownText}).\n` +
         'This message will be deleted automatically for security.'
     );
   } catch (error) {
@@ -1934,7 +1936,8 @@ async function handleNukeDm(message, config) {
   session.stage = 'awaiting_confirm';
   scheduleNukeExpiry(session, NUKE_SESSION_TTL_MS);
 
-  const countdown = session.countdownSeconds || NUKE_COUNTDOWN_SECONDS;
+  const countdown = typeof session.countdownSeconds === 'number' ? session.countdownSeconds : NUKE_COUNTDOWN_SECONDS;
+  const startDesc = countdown === 0 ? 'instantly execute self-destruct' : `start the ${countdown}-second countdown`;
 
   logInteraction('nuke_password_ok', {
     user: { id: message.author.id, username: message.author.username },
@@ -1945,17 +1948,17 @@ async function handleNukeDm(message, config) {
     .send(
       '**Nuclear code CORRECT.**\n' +
         'Return to the server and confirm: **Are you sure you want to destroy this server?**\n' +
-        `Run \`b.nuke confirm\` within 2 minutes to start the ${countdown}-second countdown.`
+        `Run \`b.nuke confirm\` within 2 minutes to ${startDesc}.`
     )
     .catch(() => {});
 
   await notifyNukeSession(
     session,
-    `<@${message.author.id}> — nuclear code **CORRECT**.\n**Are you sure you want to destroy this server?**\nRun \`b.nuke confirm\` within 2 minutes to start the ${countdown}-second countdown.`
+    `<@${message.author.id}> — nuclear code **CORRECT**.\n**Are you sure you want to destroy this server?**\nRun \`b.nuke confirm\` within 2 minutes to ${startDesc}.`
   );
 }
 
-// Step 3 + 4: `b.nuke confirm` — password verified, starting countdown.
+// Step 3 + 4: `b.nuke confirm` — password verified, starting countdown / instant.
 async function handleNukeConfirm(message, config) {
   const session = nukeSessions.get(message.author.id);
   if (!session || session.stage !== 'awaiting_confirm') {
@@ -1993,7 +1996,18 @@ async function handleNukeConfirm(message, config) {
     guild: { id: session.guildId, name: session.guildName },
   });
 
-  let remaining = session.countdownSeconds || Number(config.nukeCountdownSeconds) || NUKE_COUNTDOWN_SECONDS;
+  let remaining = typeof session.countdownSeconds === 'number'
+    ? session.countdownSeconds
+    : (typeof config.nukeCountdownSeconds === 'number' ? config.nukeCountdownSeconds : NUKE_COUNTDOWN_SECONDS);
+
+  // If 0 seconds (no countdown / instant) -> execute immediately!
+  if (remaining <= 0) {
+    nukeSessions.delete(session.userId);
+    await safeReply(message, '**INITIATE-HUMAN-INSTRUMENTALITY** — Deleting all channels and roles immediately...');
+    await executeNuke(message.guild, message.channelId, { user: message.author });
+    return;
+  }
+
   const statusMsg = await message.reply(
     `**Self-destruct starting in ${remaining} seconds.**\nCancel with \`b.nuke abort\`.`
   );
@@ -2222,13 +2236,13 @@ async function handlePurgeStart(message, args, config) {
     return;
   }
 
-  let countdownSeconds = Number(config.purgeCountdownSeconds) > 0 ? Number(config.purgeCountdownSeconds) : PURGE_COUNTDOWN_SECONDS;
+  let countdownSeconds = Number.isFinite(Number(config.purgeCountdownSeconds)) && Number(config.purgeCountdownSeconds) >= 0 ? Number(config.purgeCountdownSeconds) : PURGE_COUNTDOWN_SECONDS;
   if (args[1]) {
     const rawSec = parseInt(args[1], 10);
-    if (!isNaN(rawSec) && rawSec >= 1 && rawSec <= 300) {
+    if (!isNaN(rawSec) && rawSec >= 0 && rawSec <= 300) {
       countdownSeconds = rawSec;
     } else {
-      await safeReply(message, 'Countdown must be between 1 and 300 seconds. Example: `b.purge 50 15`');
+      await safeReply(message, 'Countdown must be between 0 and 300 seconds (0 = instant / no countdown). Example: `b.purge 50 0`');
       return;
     }
   }
@@ -2258,16 +2272,18 @@ async function handlePurgeStart(message, args, config) {
     countdownSeconds,
   });
 
+  const countdownText = countdownSeconds === 0 ? 'no countdown (instant)' : `countdown: ${countdownSeconds}s`;
+
   await safeReply(
     message,
-    `**Purge of ${count} messages initiated (countdown: ${countdownSeconds}s).**\n` +
+    `**Purge of ${count} messages initiated (${countdownText}).**\n` +
       'For verification, send the **purge code** to this **bot\'s DM**.\n' +
       'Session expires in 2 minutes.'
   );
 
   try {
     await message.author.send(
-      `Enter the **purge code** to confirm deletion of ${count} messages (${countdownSeconds}s countdown).\n` +
+      `Enter the **purge code** to confirm deletion of ${count} messages (${countdownText}).\n` +
         'This message will be deleted automatically for security.'
     );
   } catch (error) {
@@ -2327,7 +2343,8 @@ async function handlePurgeDm(message, config) {
   session.stage = 'awaiting_confirm';
   schedulePurgeExpiry(session, PURGE_SESSION_TTL_MS);
 
-  const countdown = session.countdownSeconds || PURGE_COUNTDOWN_SECONDS;
+  const countdown = typeof session.countdownSeconds === 'number' ? session.countdownSeconds : PURGE_COUNTDOWN_SECONDS;
+  const startDesc = countdown === 0 ? 'immediately delete messages' : `start the ${countdown}-second countdown`;
 
   logInteraction('purge_password_ok', {
     user: { id: message.author.id, username: message.author.username },
@@ -2339,17 +2356,17 @@ async function handlePurgeDm(message, config) {
     .send(
       `**Purge code CORRECT.**\n` +
         `Return to the server and confirm: **Are you sure you want to delete the last ${session.count} messages?**\n` +
-        `Run \`b.purge confirm\` within 2 minutes to start the ${countdown}-second countdown.`
+        `Run \`b.purge confirm\` within 2 minutes to ${startDesc}.`
     )
     .catch(() => {});
 
   await notifyPurgeSession(
     session,
-    `<@${message.author.id}> — purge code **CORRECT**.\n**Are you sure you want to delete the last ${session.count} messages?**\nRun \`b.purge confirm\` within 2 minutes to start the ${countdown}-second countdown.`
+    `<@${message.author.id}> — purge code **CORRECT**.\n**Are you sure you want to delete the last ${session.count} messages?**\nRun \`b.purge confirm\` within 2 minutes to ${startDesc}.`
   );
 }
 
-// Step 3 + 4: `b.purge confirm` — countdown.
+// Step 3 + 4: `b.purge confirm` — countdown / instant.
 async function handlePurgeConfirm(message, config) {
   const session = purgeSessions.get(message.author.id);
   if (!session || session.stage !== 'awaiting_confirm') {
@@ -2388,7 +2405,18 @@ async function handlePurgeConfirm(message, config) {
     count: session.count,
   });
 
-  let remaining = session.countdownSeconds || Number(config.purgeCountdownSeconds) || PURGE_COUNTDOWN_SECONDS;
+  let remaining = typeof session.countdownSeconds === 'number'
+    ? session.countdownSeconds
+    : (typeof config.purgeCountdownSeconds === 'number' ? config.purgeCountdownSeconds : PURGE_COUNTDOWN_SECONDS);
+
+  // If 0 seconds (no countdown / instant) -> execute immediately!
+  if (remaining <= 0) {
+    purgeSessions.delete(session.userId);
+    await safeReply(message, `**INITIATE-HUMAN-INSTRUMENTALITY** — Deleting ${session.count} messages immediately...`);
+    await executePurge(message.guild, message.channelId, session.count, { user: message.author });
+    return;
+  }
+
   const statusMsg = await message.reply(
     `**Purge of ${session.count} messages starting in ${remaining} seconds.**\nCancel with \`b.purge abort\`.`
   );
