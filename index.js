@@ -87,6 +87,14 @@ const { logInteraction } = require('./logger');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const CHANNELS_PATH = path.join(__dirname, 'channels.json');
 
+const MODERATOR_COMMANDS = new Set([
+  'nsfw',
+  'nuke',
+  'selfdestruct',
+  'purge',
+  'abort',
+]);
+
 // Queue for gacha requests to reduce CPU load
 const gachaQueue = [];
 let isProcessingQueue = false;
@@ -2346,7 +2354,7 @@ async function main() {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
   });
   const config = await loadConfig();
-  const allowlist = await loadAllowlist();
+  let allowlist = await loadAllowlist();
 
   const client = new Client({
     intents: [
@@ -2407,8 +2415,16 @@ async function main() {
       return;
     }
 
+    // Keep allowlist in sync with channels.json
+    try {
+      allowlist = await loadAllowlist();
+    } catch (_) {}
+
     const rawInput = message.content.slice(config.prefix.length).trim();
     if (!rawInput) {
+      if (!allowlist.has(message.channelId)) {
+        return;
+      }
       await safeReply(message, buildHelp(config.prefix, client.user));
       return;
     }
@@ -2416,6 +2432,11 @@ async function main() {
     const args = rawInput.split(/\s+/);
     const command = args[0].toLowerCase();
     const rest = args.slice(1);
+
+    const isModeratorCommand = MODERATOR_COMMANDS.has(command);
+    if (!isModeratorCommand && !allowlist.has(message.channelId)) {
+      return;
+    }
 
     // Log command interaction
     logInteraction('command', {
@@ -2506,11 +2527,6 @@ async function main() {
 
       if (command === 'abort') {
         await handleNukeAbort(message);
-        return;
-      }
-
-      if (!allowlist.has(message.channelId)) {
-        await safeReply(message, 'Channel not authorized. Run `b.nsfw` first (requires `Manage Channels` permission).');
         return;
       }
 
