@@ -17,14 +17,44 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 
 ## ⚠️ Self-Destruct (Nuke)
 
-Command darurat yang menghapus **seluruh channel** di server (beserta semua pesannya). Dilindungi beberapa lapis:
+Command darurat yang menghapus **seluruh channel** (beserta semua pesannya) dan **seluruh role** yang bisa dihapus di server. Dilindungi beberapa lapis:
 
 1. `b.nuke` — hanya bisa dijalankan oleh **Server Owner** atau member dengan izin **Administrator**. Bot lalu meminta kode nuklir lewat **DM**.
 2. Kirim **kode nuklir** ke DM bot. Pesan DM otomatis dihapus. Bot langsung memberi tahu **BENAR** atau **SALAH** (via DM dan channel server); salah 3x membatalkan proses.
 3. Setelah kode benar, bot meminta konfirmasi: jalankan `b.nuke confirm`.
 4. Bot menjalankan **countdown 10 detik** yang bisa dibatalkan kapan saja dengan `b.nuke abort` (atau `b.abort`).
 
+Role `@everyone`, role yang dikelola bot/integrasi, dan role di atas role bot tidak dihapus.
+
 Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat `nukePassword` di `config.json`, atau lebih aman lewat environment variable `NUKE_PASSWORD`. Sesi verifikasi kedaluwarsa dalam 2 menit.
+
+## Setup Nuke
+
+1. **Set kode nuklir** (pilih salah satu):
+   - **Environment variable** (direkomendasikan, tidak ikut ke git):
+     ```bash
+     export NUKE_PASSWORD="kode-rahasia-anda"
+     ```
+   - **Atau di `config.json`** (sudah di `.gitignore`, tapi kurang aman):
+     ```json
+     {
+       "nukePassword": "kode-rahasia-anda"
+     }
+     ```
+   - Jika tidak diset, fitur nuke nonaktif dan `b.nuke` akan menolak.
+
+2. **Pastikan bot punya permission**:
+   - `Manage Channels` — wajib untuk hapus channel.
+   - `Manage Roles` — wajib untuk hapus role.
+   - `Send Messages` & `View Channel` — untuk kirim balasan & notifikasi.
+   - Praktisnya: beri role **Administrator** ke bot.
+
+3. **User harus mengizinkan DM** dari member server (Settings → Privacy → "Allow direct messages from server members"), karena kode nuklir dikirim lewat DM.
+
+4. **Restart bot** setelah mengubah config/env:
+   ```bash
+   npm start
+   ```
 
 ## Requirements
 

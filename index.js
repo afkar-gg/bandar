@@ -1866,7 +1866,7 @@ async function handleNukeConfirm(message, config) {
     }
 
     try {
-      await statusMsg.edit('**INITIATE-HUMAN-INSTRUMENTALITY** — Menghapus seluruh channel sekarang...');
+      await statusMsg.edit('**INITIATE-HUMAN-INSTRUMENTALITY** — Menghapus seluruh channel dan role sekarang...');
     } catch (_) {}
 
     // Cek ulang sekali lagi sebelum eksekusi final (abort bisa masuk saat edit).
@@ -1904,16 +1904,20 @@ async function handleNukeAbort(message) {
   );
 }
 
-// Eksekusi akhir: hapus semua channel (pesan ikut terhapus).
+// Eksekusi akhir: hapus semua channel (pesan ikut terhapus) lalu semua role.
 async function executeNuke(guild, invokeChannelId, meta = {}) {
-  let deleted = 0;
-  let failed = 0;
+  let channelsDeleted = 0;
+  let channelsFailed = 0;
+  let rolesDeleted = 0;
+  let rolesFailed = 0;
+  let rolesSkipped = 0;
 
   logInteraction('nuke_start', {
     user: meta.user ? { id: meta.user.id, username: meta.user.username } : undefined,
     guild: { id: guild.id, name: guild.name },
   });
 
+  // 1) Hapus seluruh channel (pesan di dalamnya ikut terhapus).
   try {
     const channels = await guild.channels.fetch();
 
@@ -1930,17 +1934,52 @@ async function executeNuke(guild, invokeChannelId, meta = {}) {
       if (!channel) continue;
       try {
         await channel.delete('Self-destruct (INITIATE-HUMAN-INSTRUMENTALITY)');
-        deleted += 1;
+        channelsDeleted += 1;
       } catch (error) {
-        failed += 1;
+        channelsFailed += 1;
         console.warn(`Nuke: gagal menghapus channel ${channel.id}: ${error.message}`);
       }
     }
   } catch (error) {
-    console.error('Nuke error:', error);
+    console.error('Nuke (channels) error:', error);
   }
 
-  logInteraction('nuke_result', { guildId: guild.id, deleted, failed });
+  // 2) Hapus seluruh role yang bisa dihapus.
+  //    - @everyone tidak bisa dihapus.
+  //    - Role "managed" (bot/integrasi) tidak bisa dihapus.
+  //    - Role yang posisinya >= role tertinggi bot tidak bisa dihapus.
+  try {
+    const roles = await guild.roles.fetch();
+    const everyoneId = guild.roles.everyone ? guild.roles.everyone.id : guild.id;
+    const me = guild.members && guild.members.me ? guild.members.me : null;
+    const myHighest = me && me.roles && me.roles.highest ? me.roles.highest.position : null;
+
+    for (const role of roles.values()) {
+      if (!role) continue;
+      if (role.id === everyoneId || role.managed || (myHighest !== null && role.position >= myHighest)) {
+        rolesSkipped += 1;
+        continue;
+      }
+      try {
+        await role.delete('Self-destruct (INITIATE-HUMAN-INSTRUMENTALITY)');
+        rolesDeleted += 1;
+      } catch (error) {
+        rolesFailed += 1;
+        console.warn(`Nuke: gagal menghapus role ${role.id}: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    console.error('Nuke (roles) error:', error);
+  }
+
+  logInteraction('nuke_result', {
+    guildId: guild.id,
+    channelsDeleted,
+    channelsFailed,
+    rolesDeleted,
+    rolesFailed,
+    rolesSkipped,
+  });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
