@@ -1418,35 +1418,103 @@ async function handleGenCommand(message, args, config) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildHelp(prefix) {
-  return [
-    `Commands (${prefix}):`,
-    `${prefix}nsfw - toggle NSFW access for this channel + set Discord Age Restricted (Manage Channels required)`,
-    `${prefix}34gacha or ${prefix}34g [tags...] - random Rule34 post (no tags = fully random)`,
-    `  examples: ${prefix}34gacha 2girls blue_hair`,
-    `${prefix}poigacha or ${prefix}poi [query] - random Nekopoi post (no query = random)`,
-    `  examples: ${prefix}poigacha overflow`,
-    `${prefix}nhgacha or ${prefix}nh [query] [--sort <popular|recent>] - random nhentai post (no query = random)`,
-    `  examples: ${prefix}nhgacha doujinshi --sort popular`,
-    `${prefix}gacha [query] - random gacha from any platform`,
-    `${prefix}gen <prompt> [--provider <pollinations|horde>] [--model <model>] [--size <size>] [--steps <n>] - generate AI image (gratis)`,
-    `  provider pollinations (default, instan, ada filter) | horde (NSFW bebas, antre ~5-15 mnt)`,
-    `  pollinations models: ${Object.keys(POLLINATION_MODELS).join(', ')} | sizes: ${Object.keys(POLLINATION_SIZES).join(', ')}`,
-    `  horde sizes: ${Object.keys(HORDE_SIZES).join(', ')} | steps: ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}, makin kecil makin hemat kudos)`,
-    `  horde models (${Object.keys(HORDE_MODELS).length} pilihan, semua ada worker aktif):`,
-    `    ${formatHordeModelList()}`,
-    `  examples: ${prefix}gen maid --provider horde --model abyss --size portrait`,
-    `  contoh XL (otomatis 768px, ~12 kudos): ${prefix}gen 1girl, cyberpunk --model wai --size portrait`,
-    `  exclude tags: ${prefix}34gacha -ai_generated`,
-    `  sort: ${prefix}34gacha sort:score`,
-    `  filters: ${prefix}34gacha rating:safe | rating:questionable | rating:explicit`,
-    '  tip: other Rule34 tag operators/filters also work (passed through as-is)',
-  ].join('\n');
+function buildHelp(prefix, botUser = null) {
+  const hordeModelsFormatted = HORDE_MODEL_GROUPS.map((g) => {
+    const keys = Object.keys(HORDE_MODELS).filter((k) => HORDE_MODELS[k].group === g.key);
+    return `- **${g.name}:** ${keys.map((k) => `\`${k}\``).join(', ')}`;
+  }).join('\n');
+
+  const pollinationsModels = Object.keys(POLLINATION_MODELS).map((k) => `\`${k}\``).join(', ');
+  const pollinationsSizes = Object.keys(POLLINATION_SIZES).map((k) => `\`${k}\``).join(', ');
+  const hordeSizes = Object.keys(HORDE_SIZES).map((k) => `\`${k}\``).join(', ');
+
+  const embed = new EmbedBuilder()
+    .setColor(0xE91E63)
+    .setTitle('Bandar Bot — Panduan & Daftar Perintah')
+    .setDescription(
+      `Bot Discord untuk NSFW Gacha & AI Image Generator.\n` +
+      `Gunakan prefix \`${prefix}\` sebelum setiap perintah (contoh: \`${prefix}help\`).`
+    )
+    .addFields(
+      {
+        name: 'Otorisasi Channel',
+        value:
+          `\`${prefix}nsfw\`\n` +
+          `Mengaktifkan / mematikan akses bot di kanal ini sekaligus mengatur status Age-Restricted Discord *(memerlukan izin **Manage Channels**)*.`,
+      },
+      {
+        name: 'Perintah Gacha',
+        value:
+          `- \`${prefix}gacha [query]\` — Acak gacha dari semua platform\n` +
+          `- \`${prefix}34gacha\` / \`${prefix}34g [tags...]\` — Post acak dari **Rule34**\n` +
+          `- \`${prefix}nhgacha\` / \`${prefix}nh [query] [--sort <popular|recent>]\` — Doujin dari **nHentai**\n` +
+          `- \`${prefix}poigacha\` / \`${prefix}poi [query]\` — Video/hentai dari **Nekopoi**`,
+      },
+      {
+        name: 'Tips & Filter Tag Rule34',
+        value:
+          `- **Kombinasi tag:** \`${prefix}34g 2girls blue_hair\`\n` +
+          `- **Kecualikan tag:** \`${prefix}34g -ai_generated\`\n` +
+          `- **Urutan skor:** \`${prefix}34g sort:score\` atau \`sort:favcount\`\n` +
+          `- **Filter rating:** \`rating:safe\` | \`rating:questionable\` | \`rating:explicit\`\n` +
+          `*(Operator pencarian Rule34 lainnya didukung langsung)*`,
+      },
+      {
+        name: 'AI Image Generator (`b.gen`)',
+        value:
+          `**Format:** \`${prefix}gen <prompt> [opsi...]\` *(alias: \`${prefix}generate\`)*\n\n` +
+          `**Pilihan Provider:**\n` +
+          `- **\`pollinations\`** *(Default)*: Cepat, gratis & instan (filter SFW aktif).\n` +
+          `- **\`horde\`**: AI Horde gratis, **bebas NSFW / tanpa sensor**, antrean publik (~5-15 mnt).`,
+      },
+      {
+        name: 'Parameter Opsi `b.gen`',
+        value:
+          `- \`--provider <pollinations|horde>\` — Memilih engine AI\n` +
+          `- \`--model <model>\` — Memilih model generator *(lihat daftar di bawah)*\n` +
+          `- \`--size <size>\` — Ukuran gambar:\n` +
+          `  ↳ *Pollinations:* ${pollinationsSizes}\n` +
+          `  ↳ *Horde:* ${hordeSizes}\n` +
+          `- \`--steps <${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS}>\` — Sampling steps Horde *(default: ${HORDE_DEFAULT_STEPS})*`,
+      },
+      {
+        name: 'Pilihan Model AI Generator',
+        value:
+          `**Pollinations:** ${pollinationsModels}\n\n` +
+          `**AI Horde (Bebas NSFW):**\n` +
+          `${hordeModelsFormatted}`,
+      },
+      {
+        name: 'Contoh Penggunaan',
+        value:
+          `\`\`\`bash\n` +
+          `${prefix}34g 2girls blue_hair sort:score\n` +
+          `${prefix}nh overflow --sort popular\n` +
+          `${prefix}poi isekai\n` +
+          `${prefix}gen anime maid --provider horde --model abyss --size portrait\n` +
+          `${prefix}gen 1girl, cyberpunk --model wai --size portrait\n` +
+          `\`\`\``,
+      }
+    )
+    .setFooter({
+      text: `Bandar Bot • Ketik ${prefix}help kapan saja untuk membuka panduan ini`,
+    })
+    .setTimestamp();
+
+  if (botUser && typeof botUser.displayAvatarURL === 'function') {
+    embed.setThumbnail(botUser.displayAvatarURL());
+  }
+
+  return { embeds: [embed] };
 }
 
 async function safeReply(message, content) {
   try {
-    await message.reply(content);
+    let payload = content;
+    if (content instanceof EmbedBuilder || (content && typeof content === 'object' && content.data && !content.embeds)) {
+      payload = { embeds: [content] };
+    }
+    await message.reply(payload);
   } catch (error) {
     if (error && error.code === 50013) {
       console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
@@ -1583,7 +1651,7 @@ async function main() {
 
     const rawInput = message.content.slice(config.prefix.length).trim();
     if (!rawInput) {
-      await safeReply(message, buildHelp(config.prefix));
+      await safeReply(message, buildHelp(config.prefix, client.user));
       return;
     }
 
@@ -1602,6 +1670,10 @@ async function main() {
     });
 
     try {
+      if (command === 'help' || command === 'h') {
+        await safeReply(message, buildHelp(config.prefix, client.user));
+        return;
+      }
       if (command === 'nsfw') {
         const isOwner = message.author.id === process.env.OWNER_ID;
         const hasPermission = message.member && message.member.permissions.has(PermissionFlagsBits.ManageChannels);
@@ -1687,7 +1759,7 @@ async function main() {
         return;
       }
 
-      await safeReply(message, buildHelp(config.prefix));
+      await safeReply(message, buildHelp(config.prefix, client.user));
     } catch (error) {
       console.error('Command error:', error);
       logInteraction('error', { context: 'command_handler', message: error.message, command });

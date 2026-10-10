@@ -4,6 +4,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 
 ## Commands
 
+- `b.help` (or `b.h`) displays the help embed guide with all commands, options, and model list.
 - `b.nsfw` toggles bot authorization for the current channel (requires `Manage Channels`).
 - `b.poi [query]` fetches random Nekopoi contents with optional query
 - `b.34gacha [tags...]` fetches one random Rule34 post with optional filters (or fully random if empty).
