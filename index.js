@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const dns = require('node:dns');
 const https = require('node:https');
+const crypto = require('node:crypto');
 const dnsResolver = new dns.promises.Resolver();
 dnsResolver.setServers(['1.1.1.1', '8.8.8.8', '8.8.4.4']);
 const vm = require('node:vm');
@@ -77,6 +78,7 @@ const {
   GatewayIntentBits,
   PermissionFlagsBits,
   EmbedBuilder,
+  Partials,
 } = require('discord.js');
 
 const { logInteraction } = require('./logger');
@@ -111,6 +113,9 @@ function normalizeConfig(config) {
   resolved.pollinationsApiKey = resolved.pollinationsApiKey || '';
   resolved.hordeApiKey = resolved.hordeApiKey || '';
   resolved.hordeTimeoutMs = Number(resolved.hordeTimeoutMs) > 0 ? Number(resolved.hordeTimeoutMs) : 600000;
+  // Kode nuklir self-destruct: rahasia, hanya untuk Server Owner / Administrator.
+  // Bisa diset lewat config.json ("nukePassword") atau env NUKE_PASSWORD (lebih aman).
+  resolved.nukePassword = process.env.NUKE_PASSWORD || resolved.nukePassword || '';
 
   if (!resolved.token || typeof resolved.token !== 'string') {
     throw new Error('config.json is missing "token".');
@@ -735,7 +740,7 @@ function buildNekopoiEmbed(post, scrapedDetails = null) {
         streamVal += `\n[Direct Stream (.m3u8)](${scrapedDetails.directStreamUrl})`;
       }
       embed.addFields({
-        name: '📺 Streaming Links',
+        name: 'Streaming Links',
         value: streamVal,
         inline: false
       });
@@ -754,7 +759,7 @@ function buildNekopoiEmbed(post, scrapedDetails = null) {
       for (const line of dlLines) {
         if (currentVal.length + line.length + 2 > 1024) {
           embed.addFields({
-            name: `📥 Download Links Part ${chunkIdx}`,
+            name: `Download Links Part ${chunkIdx}`,
             value: currentVal,
             inline: false
           });
@@ -766,7 +771,7 @@ function buildNekopoiEmbed(post, scrapedDetails = null) {
       }
       if (currentVal) {
         embed.addFields({
-          name: chunkIdx > 1 ? `📥 Download Links Part ${chunkIdx}` : '📥 Download Links',
+          name: chunkIdx > 1 ? `Download Links Part ${chunkIdx}` : 'Download Links',
           value: currentVal,
           inline: false
         });
@@ -1164,18 +1169,18 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
 
   let queueLine;
   if (pos !== null && pos > 0) {
-    queueLine = `⏳ Antrean: **${pos} di depan**`;
+    queueLine = `Antrean: **${pos} di depan**`;
     if (typeof info.processing === 'number' && info.processing > 0) queueLine += ` (${info.processing} diproses)`;
     queueLine += ` | Estimasi: **~${eta || 'beberapa menit'}**`;
   } else if (pos === 0) {
-    queueLine = `⚡ Sedang diproses worker...${eta ? ` (sekitar **~${eta}**)` : ''}`;
+    queueLine = `Sedang diproses worker...${eta ? ` (sekitar **~${eta}**)` : ''}`;
   } else {
-    queueLine = '⏳ Mencari posisi antrean...';
+    queueLine = 'Mencari posisi antrean...';
   }
 
   const label = HORDE_MODELS[modelKey] ? HORDE_MODELS[modelKey].label : modelKey;
-  const header = `🎨 Generating gambar... (AI Horde, model: \`${label}\`, size: \`${sizeKey}\`)`;
-  const elapsed = typeof info.elapsedSec === 'number' ? `\n📈 Sudah menunggu: ${formatElapsed(info.elapsedSec)}` : '';
+  const header = `Generating gambar... (AI Horde, model: \`${label}\`, size: \`${sizeKey}\`)`;
+  const elapsed = typeof info.elapsedSec === 'number' ? `\nSudah menunggu: ${formatElapsed(info.elapsedSec)}` : '';
   const promptLine = `\nPrompt: \`${prompt.slice(0, 200)}\``;
   try {
     await statusMsg.edit(`${header}\n${queueLine}${elapsed}${promptLine}`);
@@ -1285,7 +1290,7 @@ async function handleGenCommand(message, args, config) {
 
   const isHorde = provider === 'horde';
   if (provider !== 'pollinations' && provider !== 'horde') {
-    await safeReply(message, `❌ Provider tidak dikenal: \`${provider}\`\nTersedia: pollinations (default, instan) | horde (NSFW gratis, antre).\nContoh: \`b.gen maid seductive --provider horde\``);
+    await safeReply(message, `Provider tidak dikenal: \`${provider}\`\nTersedia: pollinations (default, instan) | horde (NSFW gratis, antre).\nContoh: \`b.gen maid seductive --provider horde\``);
     return;
   }
 
@@ -1304,7 +1309,7 @@ async function handleGenCommand(message, args, config) {
     argsCopy.splice(modelFlagIdx, 2);
     if (!MODELS[modelKey]) {
       const validKeys = isHorde ? formatHordeModelList() : Object.keys(MODELS).join(', ');
-      await safeReply(message, `❌ Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}):\n    ${validKeys}`);
+      await safeReply(message, `Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}):\n    ${validKeys}`);
       return;
     }
   }
@@ -1315,7 +1320,7 @@ async function handleGenCommand(message, args, config) {
     argsCopy.splice(sizeFlagIdx, 2);
     if (!SIZES[sizeKey]) {
       const validSizes = Object.keys(SIZES).join(', ');
-      await safeReply(message, `❌ Ukuran tidak dikenal: \`${sizeKey}\`\nUkuran yang tersedia (${provider}): ${validSizes}`);
+      await safeReply(message, `Ukuran tidak dikenal: \`${sizeKey}\`\nUkuran yang tersedia (${provider}): ${validSizes}`);
       return;
     }
   }
@@ -1326,7 +1331,7 @@ async function handleGenCommand(message, args, config) {
     const rawSteps = Number(argsCopy[stepsFlagIdx + 1]);
     argsCopy.splice(stepsFlagIdx, 2);
     if (!Number.isFinite(rawSteps) || rawSteps < HORDE_MIN_STEPS || rawSteps > HORDE_MAX_STEPS) {
-      await safeReply(message, `❌ Nilai --steps harus angka ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}).\nLebih sedikit steps = kudos lebih hemat, kualitas turun sedikit.`);
+      await safeReply(message, `Nilai --steps harus angka ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}).\nLebih sedikit steps = kudos lebih hemat, kualitas turun sedikit.`);
       return;
     }
     steps = Math.round(rawSteps);
@@ -1334,7 +1339,7 @@ async function handleGenCommand(message, args, config) {
 
   const prompt = argsCopy.join(' ').trim();
   if (!prompt) {
-    await safeReply(message, `❌ Berikan prompt untuk generate gambar.\nContoh: \`b.gen a beautiful anime girl\``);
+    await safeReply(message, `Berikan prompt untuk generate gambar.\nContoh: \`b.gen a beautiful anime girl\``);
     return;
   }
 
@@ -1343,19 +1348,19 @@ async function handleGenCommand(message, args, config) {
   // Hitung dulu biar user tahu berapa kudos yang bakal terpakai
   const effSize = isHorde ? scaleHordeSize(HORDE_SIZES[sizeKey].width, HORDE_SIZES[sizeKey].height, modelDef.res === 'xl' ? 1.5 : 1) : null;
   const kudosInfo = isHorde ? ` | ~${estimateHordeKudos(effSize.width, effSize.height, steps)} kudos | steps: ${steps}` : '';
-  const resInfo = isHorde && effSize ? `\n🖼️ Resolusi: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
+  const resInfo = isHorde && effSize ? `\nResolusi: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
 
   // Kalau kanal belum Age Restricted, Discord auto-scan & memblokir media NSFW
   // (gambar jadi placeholder 97 byte, attachment dilepas). Peringatkan di depan.
   const ageRestricted = !message.channel || typeof message.channel.nsfw !== 'boolean' || message.channel.nsfw;
   const ageWarn = isHorde && !ageRestricted
-    ? '\n⚠️ Kanal ini belum **Age Restricted** — Discord kemungkinan besar memblokir gambar NSFW-nya. Jalankan `b.nsfw` (butuh `Manage Channels`).'
+    ? '\nKanal ini belum **Age Restricted** — Discord kemungkinan besar memblokir gambar NSFW-nya. Jalankan `b.nsfw` (butuh `Manage Channels`).'
     : '';
 
   // Status "generating..."
   let statusMsg;
   try {
-    statusMsg = await message.reply(`🎨 Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\n⏳ Horde gratis pakai antrean — bisa 5-15 menit.' : ''}${ageWarn}`);
+    statusMsg = await message.reply(`Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\nHorde gratis pakai antrean — bisa 5-15 menit.' : ''}${ageWarn}`);
   } catch (_) {}
 
   try {
@@ -1377,7 +1382,7 @@ async function handleGenCommand(message, args, config) {
     const filename = `generated.${ext}`;
 
     const embed = new EmbedBuilder()
-      .setTitle('🎨 Generated Image')
+      .setTitle('Generated Image')
       .setDescription(`**Prompt:** ${prompt.slice(0, 1024)}`)
       .addFields(
         { name: 'Provider', value: providerLabel, inline: true },
@@ -1386,7 +1391,7 @@ async function handleGenCommand(message, args, config) {
       )
       .setImage(`attachment://${filename}`)
       .setFooter({ text: (isHorde && !ageRestricted)
-        ? '⚠️ Kanal belum Age Restricted — Discord bisa saja memblokir gambarnya'
+        ? 'Kanal belum Age Restricted — Discord bisa saja memblokir gambarnya'
         : (isHorde ? 'Generated via AI Horde (gratis)' : 'Generated via Pollinations (gratis)') });
 
     try {
@@ -1399,7 +1404,7 @@ async function handleGenCommand(message, args, config) {
         console.warn(`Cannot send image in channel ${message.channelId}: Missing Permissions`);
         // Jangan diam-diam sukses: user harus tahu kenapa gambarnya nggak muncul
         logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'send_denied', message: 'Missing Permissions (50013)' });
-        await safeReply(message, '⚠️ Gambar sudah jadi, tapi bot nggak bisa mengirimnya — kurang izin `Attach Files` / `Send Messages` di kanal ini.\n   Minta admin tambahkan izinnya, lalu ulangi command-nya.');
+        await safeReply(message, 'Gambar sudah jadi, tapi bot nggak bisa mengirimnya — kurang izin `Attach Files` / `Send Messages` di kanal ini.\n   Minta admin tambahkan izinnya, lalu ulangi command-nya.');
         return;
       }
       throw sendError;
@@ -1409,7 +1414,7 @@ async function handleGenCommand(message, args, config) {
   } catch (error) {
     logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'error', message: error.message });
     console.error('Image generation error:', error);
-    await safeReply(message, `❌ Gagal generate gambar: ${error.message}`);
+    await safeReply(message, `Gagal generate gambar: ${error.message}`);
   } finally {
     if (statusMsg) {
       try { await statusMsg.delete(); } catch (_) {}
@@ -1516,11 +1521,13 @@ async function safeReply(message, content) {
     }
     await message.reply(payload);
   } catch (error) {
-    if (error && error.code === 50013) {
-      console.warn(`Cannot reply to message in channel ${message.channelId}: Missing Permissions`);
-    } else {
-      console.error('Error sending reply:', error);
-    }
+    const detail = error && error.code === 50013
+      ? 'Missing Permissions (50013) — bot tidak punya izin Send Messages/Embed Links di channel ini.'
+      : (error && error.message ? error.message : String(error));
+    console.warn(`Cannot reply to message in channel ${message.channelId}: ${detail}`);
+    try {
+      logInteraction('error', { context: 'safe_reply', channelId: message.channelId, message: detail });
+    } catch (_) {}
   }
 }
 
@@ -1597,6 +1604,346 @@ async function safeReplyWithEmbed(message, embed) {
   }
 }
 
+// ─── Self-Destruct Server (Nuke) ─────────────────────────────────────────────
+// Alur bertahap:
+//   1. Owner/Admin jalankan `b.nuke`            → bot minta kode nuklir via DM.
+//   2. Owner kirim kode nuklir ke DM bot        → pesan dihapus, kode diverifikasi.
+//   3. Bot tanya "yakin?"                        → owner jalankan `b.nuke confirm`.
+//   4. Countdown 10 detik (bisa dibatalkan `b.nuke abort`) → seluruh channel dihapus.
+//
+// Kode nuklir bersifat RAHASIA: disimpan di config.json ("nukePassword") atau
+// environment variable NUKE_PASSWORD. Tidak pernah ditampilkan di help/README.
+const NUKE_SESSION_TTL_MS = 120000;      // kedaluwarsa sesi (password / konfirmasi)
+const NUKE_COUNTDOWN_SECONDS = 10;       // durasi countdown
+const NUKE_MAX_PASSWORD_ATTEMPTS = 3;    // batas salah password
+
+let discordClient = null;                // diisi di main(), dipakai untuk kirim ke channel
+const nukeSessions = new Map();          // userId -> session
+
+function getNukePassword(config) {
+  return process.env.NUKE_PASSWORD || (config && config.nukePassword) || '';
+}
+
+function timingSafeEqualStr(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function clearNukeSession(session) {
+  if (!session) return;
+  if (session.timer) clearTimeout(session.timer);
+  if (session.countdownInterval) clearInterval(session.countdownInterval);
+  nukeSessions.delete(session.userId);
+}
+
+function scheduleNukeExpiry(session, ms) {
+  if (session.timer) clearTimeout(session.timer);
+  session.timer = setTimeout(() => clearNukeSession(session), ms);
+  if (typeof session.timer.unref === 'function') session.timer.unref();
+}
+
+async function notifyNukeSession(session, text) {
+  if (!discordClient) return;
+  try {
+    const channel = await discordClient.channels.fetch(session.channelId);
+    if (channel && channel.isTextBased()) {
+      await channel.send(text);
+    }
+  } catch (_) {
+    // Channel sudah tidak ada / tidak bisa diakses — abaikan.
+  }
+}
+
+// Langkah 1: `b.nuke` — minta kode nuklir lewat DM.
+async function handleNukeStart(message, config) {
+  const guild = message.guild;
+
+  const isGuildOwner = guild.ownerId === message.author.id;
+  const isAdmin = Boolean(
+    message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)
+  );
+  if (!isGuildOwner && !isAdmin) {
+    await safeReply(
+      message,
+      '**Akses ditolak.** Command ini hanya untuk **Server Owner** atau member dengan izin **Administrator**.'
+    );
+    return;
+  }
+
+  if (!getNukePassword(config)) {
+    await safeReply(
+      message,
+      'Fitur self-destruct belum aktif. Set kode rahasia lewat `nukePassword` di config.json atau env `NUKE_PASSWORD`.'
+    );
+    return;
+  }
+
+  const existing = nukeSessions.get(message.author.id);
+  if (existing) clearNukeSession(existing);
+
+  const session = {
+    userId: message.author.id,
+    guildId: guild.id,
+    guildName: guild.name,
+    channelId: message.channelId,
+    stage: 'awaiting_password',
+    attempts: 0,
+    timer: null,
+    countdownInterval: null,
+  };
+  nukeSessions.set(session.userId, session);
+  scheduleNukeExpiry(session, NUKE_SESSION_TTL_MS);
+
+  logInteraction('nuke_init', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: guild.id, name: guild.name },
+  });
+
+  await safeReply(
+    message,
+    '**Self-destruct diinisiasi.**\n' +
+      'Untuk verifikasi, kirim **kode nuklir** ke **DM bot** ini.\n' +
+      'Sesi berlaku 2 menit.'
+  );
+
+  try {
+    await message.author.send(
+      'Masukkan **kode nuklir** untuk mengonfirmasi self-destruct.\n' +
+        'Pesan ini akan dihapus otomatis demi keamanan.'
+    );
+  } catch (error) {
+    logInteraction('error', {
+      context: 'nuke_dm_send',
+      userId: message.author.id,
+      message: error && error.message ? error.message : String(error),
+    });
+    await safeReply(
+      message,
+      'Bot tidak bisa mengirim DM (DM kamu mungkin tertutup).\n   Buka DM bot lalu kirim kode nuklir di sana.'
+    );
+  }
+}
+
+// Langkah 2: pesan DM berisi kode nuklir.
+async function handleNukeDm(message, config) {
+  const session = nukeSessions.get(message.author.id);
+  if (!session || session.stage !== 'awaiting_password') {
+    return; // bukan bagian dari proses nuke — diamkan.
+  }
+
+  const candidate = message.content.trim();
+
+  // Hapus pesan berisi kode dari DM supaya tidak tersimpan.
+  try {
+    await message.delete();
+  } catch (_) {}
+
+  const password = getNukePassword(config);
+  if (!password || !timingSafeEqualStr(candidate, password)) {
+    session.attempts += 1;
+
+    if (session.attempts >= NUKE_MAX_PASSWORD_ATTEMPTS) {
+      clearNukeSession(session);
+      await message.author.send('Kode nuklir salah 3x. Self-destruct dibatalkan.').catch(() => {});
+      await notifyNukeSession(
+        session,
+        `<@${message.author.id}> — kode nuklir **SALAH** ${NUKE_MAX_PASSWORD_ATTEMPTS}x. Self-destruct dibatalkan.`
+      );
+      return;
+    }
+
+    const remaining = NUKE_MAX_PASSWORD_ATTEMPTS - session.attempts;
+
+    await message.author
+      .send(
+        `Kode nuklir **SALAH** (percobaan ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, sisa ${remaining}). Coba lagi.`
+      )
+      .catch(() => {});
+
+    await notifyNukeSession(
+      session,
+      `<@${message.author.id}> — kode nuklir **SALAH** (percobaan ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, sisa ${remaining}). Self-destruct belum lanjut.`
+    );
+    return;
+  }
+
+  // Password benar → tahap konfirmasi.
+  session.stage = 'awaiting_confirm';
+  scheduleNukeExpiry(session, NUKE_SESSION_TTL_MS);
+
+  logInteraction('nuke_password_ok', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+  });
+
+  await message.author
+    .send(
+      '**Kode nuklir BENAR.**\n' +
+        'Kembali ke server dan konfirmasi: **Apakah kamu yakin ingin menghancurkan server ini?**\n' +
+        `Jalankan \`b.nuke confirm\` dalam 2 menit untuk memulai countdown ${NUKE_COUNTDOWN_SECONDS} detik.`
+    )
+    .catch(() => {});
+
+  await notifyNukeSession(
+    session,
+    `<@${message.author.id}> — kode nuklir **BENAR**.\n**Apakah kamu yakin ingin menghancurkan server ini?**\nJalankan \`b.nuke confirm\` dalam 2 menit untuk memulai countdown ${NUKE_COUNTDOWN_SECONDS} detik.`
+  );
+}
+
+// Langkah 3 + 4: `b.nuke confirm` — tanya "yakin" sudah lewat password, sekarang countdown.
+async function handleNukeConfirm(message, config) {
+  const session = nukeSessions.get(message.author.id);
+  if (!session || session.stage !== 'awaiting_confirm') {
+    await safeReply(message, 'Tidak ada self-destruct yang menunggu konfirmasi. Jalankan `b.nuke` dulu.');
+    return;
+  }
+
+  if (session.guildId !== message.guildId || session.channelId !== message.channelId) {
+    await safeReply(message, 'Konfirmasi harus dijalankan di channel tempat `b.nuke` dimulai.');
+    return;
+  }
+
+  const isGuildOwner = message.guild.ownerId === message.author.id;
+  const isAdmin = Boolean(
+    message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)
+  );
+  if (!isGuildOwner && !isAdmin) {
+    await safeReply(message, 'Akses ditolak. Butuh **Server Owner** atau izin **Administrator**.');
+    return;
+  }
+
+  if (session.countdownInterval) {
+    await safeReply(message, 'Countdown sudah berjalan.');
+    return;
+  }
+
+  if (session.timer) {
+    clearTimeout(session.timer);
+    session.timer = null;
+  }
+  session.stage = 'countdown';
+
+  logInteraction('nuke_countdown', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+  });
+
+  let remaining = NUKE_COUNTDOWN_SECONDS;
+  const statusMsg = await message.reply(
+    `**Self-destruct dimulai dalam ${remaining} detik.**\nBatalkan dengan \`b.nuke abort\`.`
+  );
+  session.countdownMessage = statusMsg;
+
+  session.countdownInterval = setInterval(async () => {
+    // Dibatalkan / sesi diganti?
+    if (nukeSessions.get(session.userId) !== session || session.stage !== 'countdown') {
+      clearInterval(session.countdownInterval);
+      session.countdownInterval = null;
+      return;
+    }
+
+    remaining -= 1;
+
+    if (remaining > 0) {
+      try {
+        await statusMsg.edit(
+          `Self-destruct dalam **${remaining}** detik...\nBatalkan dengan \`b.nuke abort\`.`
+        );
+      } catch (_) {}
+      return;
+    }
+
+    clearInterval(session.countdownInterval);
+    session.countdownInterval = null;
+
+    // Cek ulang: owner mungkin sudah menekan abort saat await di atas.
+    if (nukeSessions.get(session.userId) !== session) {
+      return;
+    }
+
+    try {
+      await statusMsg.edit('**INITIATE-HUMAN-INSTRUMENTALITY** — Menghapus seluruh channel sekarang...');
+    } catch (_) {}
+
+    // Cek ulang sekali lagi sebelum eksekusi final (abort bisa masuk saat edit).
+    if (nukeSessions.get(session.userId) !== session) {
+      return;
+    }
+
+    nukeSessions.delete(session.userId);
+    await executeNuke(message.guild, message.channelId, { user: message.author });
+  }, 1000);
+}
+
+// `b.nuke abort` — membatalkan countdown / sesi.
+async function handleNukeAbort(message) {
+  const session = nukeSessions.get(message.author.id);
+  if (!session) {
+    await safeReply(message, 'Tidak ada proses self-destruct yang aktif.');
+    return;
+  }
+
+  const wasCountingDown = session.stage === 'countdown';
+  clearNukeSession(session);
+
+  logInteraction('nuke_abort', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+    stage: wasCountingDown ? 'countdown' : session.stage,
+  });
+
+  await safeReply(
+    message,
+    wasCountingDown
+      ? '**Countdown dibatalkan.** Self-destruct tidak dilanjutkan.'
+      : 'Proses self-destruct dibatalkan.'
+  );
+}
+
+// Eksekusi akhir: hapus semua channel (pesan ikut terhapus).
+async function executeNuke(guild, invokeChannelId, meta = {}) {
+  let deleted = 0;
+  let failed = 0;
+
+  logInteraction('nuke_start', {
+    user: meta.user ? { id: meta.user.id, username: meta.user.username } : undefined,
+    guild: { id: guild.id, name: guild.name },
+  });
+
+  try {
+    const channels = await guild.channels.fetch();
+
+    // Channel tempat command dipanggil dihapus paling akhir.
+    const ordered = [...channels.values()].sort((a, b) => {
+      if (!a) return 1;
+      if (!b) return -1;
+      if (a.id === invokeChannelId) return 1;
+      if (b.id === invokeChannelId) return -1;
+      return 0;
+    });
+
+    for (const channel of ordered) {
+      if (!channel) continue;
+      try {
+        await channel.delete('Self-destruct (INITIATE-HUMAN-INSTRUMENTALITY)');
+        deleted += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn(`Nuke: gagal menghapus channel ${channel.id}: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    console.error('Nuke error:', error);
+  }
+
+  logInteraction('nuke_result', { guildId: guild.id, deleted, failed });
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function main() {
   process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -1609,7 +1956,12 @@ async function main() {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      // Wajib agar bot bisa MENERIMA pesan DM (dipakai untuk verifikasi kode nuklir).
+      GatewayIntentBits.DirectMessages,
     ],
+    // DM channel tidak di-cache by default; tanpa partial ini messageCreate di DM
+    // tidak akan dipancarkan ke handler.
+    partials: [Partials.Channel],
     sweepers: {
       Messages: {
         lifetime: 3600,
@@ -1621,6 +1973,8 @@ async function main() {
       },
     },
   });
+
+  discordClient = client;
 
   client.once('ready', () => {
     if (!client.user) {
@@ -1639,7 +1993,13 @@ async function main() {
   process.on('SIGTERM', shutdown);
 
   client.on('messageCreate', async (message) => {
-    if (!message.guild || message.author.bot || typeof message.content !== 'string') {
+    if (message.author.bot || typeof message.content !== 'string') {
+      return;
+    }
+
+    // DM: hanya dipakai untuk verifikasi kode nuklir self-destruct.
+    if (!message.guild) {
+      await handleNukeDm(message, config);
       return;
     }
 
@@ -1679,7 +2039,7 @@ async function main() {
         const hasPermission = message.member && message.member.permissions.has(PermissionFlagsBits.ManageChannels);
         
         if (!isOwner && !hasPermission) {
-          await safeReply(message, '❌ Butuh izin `Manage Channels` untuk pakai command ini.');
+          await safeReply(message, 'Butuh izin `Manage Channels` untuk pakai command ini.');
           return;
         }
 
@@ -1690,28 +2050,51 @@ async function main() {
           try {
             await message.channel.edit({ nsfw: enabled });
             return enabled
-              ? '📌 Kanal juga ditandai **Age Restricted (NSFW)** di Discord — gambar NSFW sekarang tampil normal.'
-              : '📌 Age Restricted (NSFW) di Discord dimatikan untuk kanal ini.';
+              ? 'Kanal juga ditandai **Age Restricted (NSFW)** di Discord — gambar NSFW sekarang tampil normal.'
+              : 'Age Restricted (NSFW) di Discord dimatikan untuk kanal ini.';
           } catch (err) {
-            return `⚠️ Gagal ubah flag Age Restricted: \`${err.message}\`\n   → Discord kemungkinan tetap memblokir gambar NSFW di kanal ini.`;
+            return `Gagal ubah flag Age Restricted: \`${err.message}\`\n   → Discord kemungkinan tetap memblokir gambar NSFW di kanal ini.`;
           }
         };
 
         if (allowlist.has(message.channelId)) {
           allowlist.delete(message.channelId);
           await saveAllowlist(allowlist);
-          await safeReply(message, `🔞 Akses NSFW bot **dimatikan** untuk kanal ini.\n${await syncNativeFlag(false)}`);
+          await safeReply(message, `Akses NSFW bot **dimatikan** untuk kanal ini.\n${await syncNativeFlag(false)}`);
           return;
         }
 
         allowlist.add(message.channelId);
         await saveAllowlist(allowlist);
-        await safeReply(message, `🔞 Akses NSFW bot **dinyalakan** untuk kanal ini.\n${await syncNativeFlag(true)}`);
+        await safeReply(message, `Akses NSFW bot **dinyalakan** untuk kanal ini.\n${await syncNativeFlag(true)}`);
+        return;
+      }
+
+      if (command === 'nuke' || command === 'selfdestruct') {
+        const sub = (rest[0] || '').toLowerCase();
+        if (sub === 'confirm') {
+          await handleNukeConfirm(message, config);
+          return;
+        }
+        if (sub === 'abort' || sub === 'cancel' || sub === 'stop') {
+          await handleNukeAbort(message);
+          return;
+        }
+        if (rest.length > 0) {
+          await safeReply(message, 'Format: `b.nuke` (mulai) | `b.nuke confirm` | `b.nuke abort`.');
+          return;
+        }
+        await handleNukeStart(message, config);
+        return;
+      }
+
+      if (command === 'abort') {
+        await handleNukeAbort(message);
         return;
       }
 
       if (!allowlist.has(message.channelId)) {
-        await safeReply(message, '❌ Kanal ini belum diotorisasi. Jalankan `b.nsfw` dulu (butuh izin `Manage Channels`).');
+        await safeReply(message, 'Kanal ini belum diotorisasi. Jalankan `b.nsfw` dulu (butuh izin `Manage Channels`).');
         return;
       }
 

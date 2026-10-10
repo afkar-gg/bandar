@@ -15,6 +15,17 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
   - `b.34gacha rating:safe` (also `rating:questionable`, `rating:explicit`)
 - Other Rule34 tag operators/filters are passed through as-is.
 
+## ⚠️ Self-Destruct (Nuke)
+
+Command darurat yang menghapus **seluruh channel** di server (beserta semua pesannya). Dilindungi beberapa lapis:
+
+1. `b.nuke` — hanya bisa dijalankan oleh **Server Owner** atau member dengan izin **Administrator**. Bot lalu meminta kode nuklir lewat **DM**.
+2. Kirim **kode nuklir** ke DM bot. Pesan DM otomatis dihapus. Bot langsung memberi tahu **BENAR** atau **SALAH** (via DM dan channel server); salah 3x membatalkan proses.
+3. Setelah kode benar, bot meminta konfirmasi: jalankan `b.nuke confirm`.
+4. Bot menjalankan **countdown 10 detik** yang bisa dibatalkan kapan saja dengan `b.nuke abort` (atau `b.abort`).
+
+Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat `nukePassword` di `config.json`, atau lebih aman lewat environment variable `NUKE_PASSWORD`. Sesi verifikasi kedaluwarsa dalam 2 menit.
+
 ## Requirements
 
 - Node.js 20+
@@ -22,6 +33,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 - Rule34 API credentials (`user_id` and `api_key`) from https://rule34.xxx/index.php?page=account&s=options
 - Discord Developer Portal intents:
   - `MESSAGE CONTENT INTENT` enabled
+  - `DIRECT MESSAGES` intent is requested in code (no portal toggle needed) — diperlukan agar bot bisa menerima kode nuklir lewat DM.
 
 ## Setup
 
