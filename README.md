@@ -20,7 +20,7 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 Emergency command that deletes **all channels** (including all messages) and **all deletable roles** in the server. Protected by multiple layers:
 
 1. `b.nuke` — only executable by **Server Owner** or members with **Administrator** permission. Bot then requests nuclear code via **DM**.
-2. Kirim **kode nuklir** ke DM bot. DM message auto-deleted. Bot immediately reports **CORRECT** or **INCORRECT** (via DM and server channel); 3 wrong attempts cancels the process.
+2. Send **kode nuklir** to bot DM. DM message auto-deleted. Bot immediately reports **CORRECT** or **INCORRECT** (via DM and server channel); 3 wrong attempts cancels the process.
 3. After correct code, bot asks for confirmation: run `b.nuke confirm`.
 4. Bot runs a **10-second countdown** cancellable anytime with `b.nuke abort` (or `b.abort`).
 
@@ -28,54 +28,54 @@ Role `@everyone`, bot/integration-managed roles, and roles above the bot's highe
 
 Nuclear code is **secret** and not shown in help/README. Set via `nukePassword` in `config.json`, or more securely via environment variable `NUKE_PASSWORD`. Verification session expires in 2 minutes.
 
-## ⚠️ Purge Messages
+## Purge Messages
 
 Command to delete **N latest messages** in channel (max 1000). Uses the same security mechanism as nuke:
 
-1. `b.purge <jumlah>` — hanya **Server Owner** atau **Administrator**. Bot minta kode purge lewat **DM**.
+1. `b.purge <count>` — Only **Server Owner** or **Administrator**. Bot will asking purge password via **DM**.
 2. Send **purge code** to bot DM. DM auto-deleted. Bot reports **CORRECT**/**INCORRECT** (DM + channel); 3 wrong attempts cancels.
 3. After correct code, bot asks "sure?" → run `b.purge confirm`.
-4. **Countdown 10 detik** (bisa dibatalkan `b.purge abort` / `b.abort`) → hapus pesan.
+4. **Countdown 10 sec** (can canceled `b.purge abort` / `b.abort`) → delete message.
 
-Pesan >14 hari tidak bisa dihapus massal (batasan Discord). Purge code is separate from nuke: `purgePassword` in config.json or env `PURGE_PASSWORD`.
+Message >14 days cannot mass delete (Discord limit). Purge code is separate from nuke: `purgePassword` in config.json or env `PURGE_PASSWORD`.
 
-## Setup Nuke
+## Nuke Setup
 
-1. **Set kode nuklir** (pilih salah satu):
-   - **Environment variable** (direkomendasikan, tidak ikut ke git):
+1. **Set nuclear code** (select one):
+   - **Environment variable** (recommended):
      ```bash
-     export NUKE_PASSWORD="kode-rahasia-anda"
+     export NUKE_PASSWORD="your-secret-code"
      ```
-   - **Atau di `config.json`** (sudah di `.gitignore`, tapi kurang aman):
+   - **Or in `config.json`**:
      ```json
      {
-       "nukePassword": "kode-rahasia-anda"
+       "nukePassword": "your-secret-code"
      }
      ```
    - If not set, nuke feature is disabled and `b.nuke` will reject.
 
-2. **Set kode purge** (pilih salah satu, terpisah dari nuklir):
-   - **Environment variable** (direkomendasikan):
+2. **Set purge code** (select one, separated from nuke):
+   - **Environment variable** (recommended):
      ```bash
-     export PURGE_PASSWORD="kode-purge-anda"
+     export PURGE_PASSWORD="your-purge-code"
      ```
-   - **Atau di `config.json`**:
+   - **Or in `config.json`**:
      ```json
      {
-       "purgePassword": "kode-purge-anda"
+       "purgePassword": "your-purge-code"
      }
      ```
    - If not set, purge feature is disabled and `b.purge` will reject.
 
-3. **Pastikan bot punya permission**:
+3. **Make sure bot have permission**:
    - `Manage Channels` — required to delete channels.
    - `Manage Roles` — required to delete roles.
    - `Send Messages` & `View Channel` — for sending replies & notifications.
    - Practically: give bot **Administrator** role.
 
-3. **User harus mengizinkan DM** dari member server (Settings → Privacy → "Allow direct messages from server members"), karena kode nuklir dikirim lewat DM.
+3. **User must allow DM** from server member (Settings → Privacy → "Allow direct messages from server members"), because nuclear code sent via DM.
 
-4. **Restart bot** setelah mengubah config/env:
+4. **Restart bot** after changing config/env:
    ```bash
    npm start
    ```
