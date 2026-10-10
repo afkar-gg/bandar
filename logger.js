@@ -31,7 +31,7 @@ function logInteraction(type, data) {
 
   // 2. Save as Readable Text (Human readable)
   try {
-    const timeStr = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    const timeStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' });
     let readableMsg = `[${timeStr}] [${type.toUpperCase()}] `;
 
     switch (type) {

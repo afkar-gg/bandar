@@ -79,6 +79,7 @@ const {
   PermissionFlagsBits,
   EmbedBuilder,
   Partials,
+  Events,
 } = require('discord.js');
 
 const { logInteraction } = require('./logger');
@@ -113,8 +114,8 @@ function normalizeConfig(config) {
   resolved.pollinationsApiKey = resolved.pollinationsApiKey || '';
   resolved.hordeApiKey = resolved.hordeApiKey || '';
   resolved.hordeTimeoutMs = Number(resolved.hordeTimeoutMs) > 0 ? Number(resolved.hordeTimeoutMs) : 600000;
-  // Kode nuklir self-destruct: rahasia, hanya untuk Server Owner / Administrator.
-  // Bisa diset lewat config.json ("nukePassword") atau env NUKE_PASSWORD (lebih aman).
+  // Nuclear code for self-destruct: secret, only for Server Owner / Administrator.
+  // Can be set via config.json ("nukePassword") or env NUKE_PASSWORD (safer).
   resolved.nukePassword = process.env.NUKE_PASSWORD || resolved.nukePassword || '';
 
   if (!resolved.token || typeof resolved.token !== 'string') {
@@ -920,7 +921,7 @@ async function handleNhentaiCommand(message, query, config, sort = 'popular') {
 }
 
 
-// ─── Pollinations Image Generation (gratis) ──────────────────────────────────
+// ─── Pollinations Image Generation (free) ──────────────────────────────────
 
 const POLLINATIONS_HOST = 'gen.pollinations.ai';
 
@@ -989,8 +990,8 @@ async function httpsRequestRaw(host, path, { headers = {}, method = 'GET', body 
 /**
  * Generate an image via the free Pollinations API:
  *   GET https://gen.pollinations.ai/image/{prompt}?model=..&width=..&height=..
- * Optional API key (config.pollinationsApiKey) untuk prioritas & model berbayar,
- * tapi API ini JALAN GRATIS tanpa key.
+ * Optional API key (config.pollinationsApiKey) for priority & paid models,
+ * but this API runs FREE without a key.
  * Returns { buffer, contentType, modelId }.
  */
 async function generateImagePollinations(config, prompt, modelKey = POLLINATION_DEFAULT_MODEL, sizeKey = POLLINATION_DEFAULT_SIZE) {
@@ -1019,21 +1020,21 @@ async function generateImagePollinations(config, prompt, modelKey = POLLINATION_
 
   const contentType = res.headers['content-type'] || 'image/jpeg';
   if (!contentType.startsWith('image/')) {
-    // Pollinations kadang membalas teks/JSON walau HTTP 200 (mis. prompt ditolak filter konten)
-    throw new Error(`Pollinations tidak mengembalikan gambar (${contentType}): ${res.buffer.toString().slice(0, 200)}`);
+    // Pollinations sometimes returns text/JSON even on HTTP 200 (e.g. prompt rejected by content filter)
+    throw new Error(`Pollinations did not return an image (${contentType}): ${res.buffer.toString().slice(0, 200)}`);
   }
 
   return { buffer: res.buffer, contentType, modelId: model.id };
 }
 
-// ─── AI Horde Image Generation (gratis, NSFW, antre) ──────────────────────────
+// ─── AI Horde Image Generation (free, NSFW, queued) ──────────────────────────
 
 const HORDE_HOST = 'stablehorde.net';
 
-// Model terkurasi dari 177 model aktif di horde — hanya yang worker-nya ada
-// dan reputasinya bagus. res: 'xl' → butuh resolusi lebih besar (kudos lebih mahal).
+// Curated models from active models on horde — only those with active workers
+// and good reputation. res: 'xl' → requires higher resolution (more expensive kudos).
 const HORDE_MODELS = {
-  // ── Anime SD1.5 — murah & cepat (~6 kudos/gambar di 512²) ──
+  // ── Anime SD1.5 — cheap & fast (~6 kudos/image at 512²) ──
   'abyss':       { id: 'AbyssOrangeMix-AfterDark', group: 'anime', label: 'AbyssOrangeMix AfterDark' },
   'deliberate':  { id: 'Deliberate 3.0', group: 'anime', label: 'Deliberate 3.0' },
   'anything':    { id: 'Anything v5', group: 'anime', label: 'Anything v5' },
@@ -1046,7 +1047,7 @@ const HORDE_MODELS = {
   'flat2d':      { id: 'Flat-2D Animerge', group: 'anime', label: 'Flat-2D Animerge' },
   'toonyou':     { id: 'ToonYou', group: 'anime', label: 'ToonYou' },
 
-  // ── Anime XL / Pony / Illustrious — kualitas terbaik, lebih mahal ──
+  // ── Anime XL / Pony / Illustrious — highest quality, more expensive ──
   'wai':         { id: 'WAI-NSFW-illustrious-SDXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Illustrious SDXL' },
   'waipony':     { id: 'WAI-ANI-NSFW-PONYXL', group: 'animexl', res: 'xl', label: 'WAI NSFW Pony XL' },
   'nova':        { id: 'Nova Anime XL', group: 'animexl', res: 'xl', label: 'Nova Anime XL' },
@@ -1060,11 +1061,11 @@ const HORDE_MODELS = {
   'zavy':        { id: 'ZavyChromaXL', group: 'animexl', res: 'xl', label: 'ZavyChromaXL' },
   'anima':       { id: 'Anima-Turbo-v1.1', group: 'animexl', res: 'xl', label: 'Anima-Turbo v1.1' },
 
-  // ── Realistis ──
+  // ── Realistic ──
   'real':        { id: 'AbsoluteReality', group: 'real', label: 'AbsoluteReality' },
   'rv':          { id: 'Realistic Vision', group: 'real', label: 'Realistic Vision' },
   'juggernaut':  { id: 'Juggernaut XL', group: 'real', res: 'xl', label: 'Juggernaut XL' },
-  'icbinp':      { id: "ICBINP - I Can't Believe It's Not Photography", group: 'real', label: 'ICBINP (foto realistis)' },
+  'icbinp':      { id: "ICBINP - I Can't Believe It's Not Photography", group: 'real', label: 'ICBINP (photorealistic)' },
   'icbinpxl':    { id: 'ICBINP XL', group: 'real', res: 'xl', label: 'ICBINP XL' },
   'natvis':      { id: 'NatViS', group: 'real', label: 'NatViS' },
   'realbiter':   { id: 'RealBiter', group: 'real', label: 'RealBiter' },
@@ -1080,7 +1081,7 @@ const HORDE_MODELS = {
   'novafurry':   { id: 'Nova Furry XL', group: 'furry', res: 'xl', label: 'Nova Furry XL' },
   'yiff':        { id: "Lawlas's yiff mix", group: 'furry', label: "Lawlas's yiff mix" },
 
-  // ── Eksperimental / cepat ──
+  // ── Experimental / fast ──
   'flux':        { id: 'Flux.1-Schnell fp8 (Compact)', group: 'exp', label: 'FLUX.1 Schnell fp8' },
   'krea':        { id: 'Krea2-Turbo_fp8', group: 'exp', label: 'Krea2 Turbo fp8' },
   'zturbo':      { id: 'Z-Image-Turbo', group: 'exp', label: 'Z-Image Turbo' },
@@ -1088,11 +1089,11 @@ const HORDE_MODELS = {
 };
 
 const HORDE_MODEL_GROUPS = [
-  { key: 'anime',   name: 'Anime (murah, cepat)' },
-  { key: 'animexl', name: 'Anime XL/Pony (kualitas, mahal)' },
-  { key: 'real',    name: 'Realistis' },
+  { key: 'anime',   name: 'Anime (cheap, fast)' },
+  { key: 'animexl', name: 'Anime XL/Pony (high quality)' },
+  { key: 'real',    name: 'Realistic' },
   { key: 'furry',   name: 'Furry' },
-  { key: 'exp',     name: 'Eksperimental / cepat' },
+  { key: 'exp',     name: 'Experimental / fast' },
 ];
 
 const HORDE_DEFAULT_MODEL = 'abyss';
@@ -1108,12 +1109,12 @@ const HORDE_DEFAULT_STEPS = 20;
 const HORDE_MIN_STEPS = 8;
 const HORDE_MAX_STEPS = 40;
 
-// Perkiraan biaya kudos horde ≈ (lebar * tinggi * steps) / 1e6
+// Estimated horde kudos cost ≈ (width * height * steps) / 1e6
 function estimateHordeKudos(width, height, steps) {
   return Math.max(1, Math.ceil((width * height * steps) / 1000000));
 }
 
-// Model XL pecah kalau resolusi kecil — skala 1.5x, bulatkan ke kelipatan 64
+// XL models degrade at low resolutions — scale 1.5x, round to nearest multiple of 64
 function scaleHordeSize(width, height, scale) {
   if (!scale || scale === 1) return { width, height };
   const round64 = (n) => Math.max(64, Math.round((n * scale) / 64) * 64);
@@ -1140,26 +1141,26 @@ function buildHordeError(res, stage) {
   if (!msg) msg = res.buffer.toString().slice(0, 200);
   switch (res.statusCode) {
     case 401:
-      return new Error(`Horde: API key ditolak (401) — cek hordeApiKey di config.json.`);
+      return new Error('Horde: API key rejected (401) — check hordeApiKey in config.json.');
     case 429:
-      return new Error('Horde: rate limit / kudos tidak cukup (429). Coba lagi nanti.');
+      return new Error('Horde: rate limit / insufficient kudos (429). Try again later.');
     default:
-      return new Error(`Horde error ${res.statusCode} saat ${stage}: ${msg}`);
+      return new Error(`Horde error ${res.statusCode} during ${stage}: ${msg}`);
   }
 }
 
 function formatHordeEta(sec) {
   if (!sec || sec <= 0) return null;
-  if (sec < 60) return `${Math.max(1, Math.round(sec))} detik`;
-  return `${Math.ceil(sec / 60)} menit`;
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} seconds`;
+  return `${Math.ceil(sec / 60)} minutes`;
 }
 
 function formatElapsed(sec) {
-  if (!sec || sec < 0) return '0 detik';
-  if (sec < 60) return `${Math.max(1, Math.round(sec))} detik`;
+  if (!sec || sec < 0) return '0 seconds';
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} seconds`;
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
-  return s > 0 ? `${m} menit ${s} detik` : `${m} menit`;
+  return s > 0 ? `${m} minutes ${s} seconds` : `${m} minutes`;
 }
 
 async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
@@ -1169,31 +1170,31 @@ async function updateHordeStatus(statusMsg, info, prompt, modelKey, sizeKey) {
 
   let queueLine;
   if (pos !== null && pos > 0) {
-    queueLine = `Antrean: **${pos} di depan**`;
-    if (typeof info.processing === 'number' && info.processing > 0) queueLine += ` (${info.processing} diproses)`;
-    queueLine += ` | Estimasi: **~${eta || 'beberapa menit'}**`;
+    queueLine = `Queue: **${pos} ahead**`;
+    if (typeof info.processing === 'number' && info.processing > 0) queueLine += ` (${info.processing} processing)`;
+    queueLine += ` | Estimated: **~${eta || 'a few minutes'}**`;
   } else if (pos === 0) {
-    queueLine = `Sedang diproses worker...${eta ? ` (sekitar **~${eta}**)` : ''}`;
+    queueLine = `Processing by worker...${eta ? ` (approx. **~${eta}**)` : ''}`;
   } else {
-    queueLine = 'Mencari posisi antrean...';
+    queueLine = 'Finding queue position...';
   }
 
   const label = HORDE_MODELS[modelKey] ? HORDE_MODELS[modelKey].label : modelKey;
-  const header = `Generating gambar... (AI Horde, model: \`${label}\`, size: \`${sizeKey}\`)`;
-  const elapsed = typeof info.elapsedSec === 'number' ? `\nSudah menunggu: ${formatElapsed(info.elapsedSec)}` : '';
+  const header = `Generating image... (AI Horde, model: \`${label}\`, size: \`${sizeKey}\`)`;
+  const elapsed = typeof info.elapsedSec === 'number' ? `\nElapsed: ${formatElapsed(info.elapsedSec)}` : '';
   const promptLine = `\nPrompt: \`${prompt.slice(0, 200)}\``;
   try {
     await statusMsg.edit(`${header}\n${queueLine}${elapsed}${promptLine}`);
   } catch (_) {
-    // Pesan status sudah terhapus / tidak bisa diedit — abaikan
+    // Status message already deleted / cannot be edited — ignore
   }
 }
 
 /**
  * Generate an image via AI Horde (free community GPU network, NSFW-friendly).
- * Anonymous (hordeApiKey kosong / key "0000000000") diprioritaskan paling
- * belakang — antrean bisa 5-15+ menit. Polling status sampai done.
- * onStatus(info) dipanggil tiap poll: { queuePosition, processing, waitTimeSec, elapsedSec }.
+ * Anonymous (empty hordeApiKey / key "0000000000") is given lowest priority
+ * and queue can take 5-15+ minutes. Polls status until completed.
+ * onStatus(info) is called on each poll: { queuePosition, processing, waitTimeSec, elapsedSec }.
  * Returns { buffer, contentType, modelId }.
  */
 async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL, sizeKey = HORDE_DEFAULT_SIZE, onStatus = null, steps = HORDE_DEFAULT_STEPS) {
@@ -1206,7 +1207,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
   const timeoutMs = config.hordeTimeoutMs || 600000;
   const authHeaders = { apikey: apiKey, 'Content-Type': 'application/json' };
 
-  // 1) Submit job ke antrean
+  // 1) Submit job to queue
   const payload = {
     prompt,
     params: { width: size.width, height: size.height, steps: stepCount, sampler_name: 'k_euler', cfg_scale: 7 },
@@ -1225,10 +1226,10 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
   try {
     submitData = JSON.parse(submit.buffer.toString());
   } catch (_) {
-    throw new Error('Horde: respons submit tidak valid.');
+    throw new Error('Horde: invalid submit response.');
   }
   const jobId = submitData.id;
-  if (!jobId) throw new Error('Horde: tidak ada job id pada respons submit.');
+  if (!jobId) throw new Error('Horde: no job id in submit response.');
 
   // 2) Polling status sampai done
   const startedAt = Date.now();
@@ -1241,7 +1242,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
       headers: authHeaders,
       timeoutMs: 30000,
     });
-    if (status.statusCode === 404) throw new Error('Horde: job tidak ditemukan (404). Coba lagi.');
+    if (status.statusCode === 404) throw new Error('Horde: job not found (404). Try again.');
 
     let statusData = null;
     try {
@@ -1249,10 +1250,10 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
     } catch (_) {}
 
     if (statusData) {
-      if (statusData.faulted) throw new Error('Horde: job gagal diproses worker. Coba lagi nanti.');
+      if (statusData.faulted) throw new Error('Horde: job failed to process. Try again later.');
       if (statusData.done) {
         const gen = statusData.generations && statusData.generations[0];
-        if (!gen || !gen.img) throw new Error('Horde: selesai tapi tidak ada gambar di hasil.');
+        if (!gen || !gen.img) throw new Error('Horde: completed but no image in result.');
         const buffer = Buffer.from(gen.img, 'base64');
         return { buffer, contentType: 'image/jpeg', modelId: model.id, kudos: kudosCost, width: size.width, height: size.height };
       }
@@ -1269,7 +1270,7 @@ async function generateImageHorde(config, prompt, modelKey = HORDE_DEFAULT_MODEL
     }
   }
 
-  throw new Error(`Horde: timeout menunggu hasil (${Math.round(timeoutMs / 60000)} menit). Antrean gratis bisa panjang — coba lagi nanti.`);
+  throw new Error(`Horde: timeout waiting for result (${Math.round(timeoutMs / 60000)} minutes). Free queue can be long — try again later.`);
 }
 
 async function handleGenCommand(message, args, config) {
@@ -1290,7 +1291,7 @@ async function handleGenCommand(message, args, config) {
 
   const isHorde = provider === 'horde';
   if (provider !== 'pollinations' && provider !== 'horde') {
-    await safeReply(message, `Provider tidak dikenal: \`${provider}\`\nTersedia: pollinations (default, instan) | horde (NSFW gratis, antre).\nContoh: \`b.gen maid seductive --provider horde\``);
+    await safeReply(message, `Provider not recognized: \`${provider}\`\nAvailable: pollinations (default, instant) | horde (NSFW free, queue).\nContoh: \`b.gen maid seductive --provider horde\``);
     return;
   }
 
@@ -1309,7 +1310,7 @@ async function handleGenCommand(message, args, config) {
     argsCopy.splice(modelFlagIdx, 2);
     if (!MODELS[modelKey]) {
       const validKeys = isHorde ? formatHordeModelList() : Object.keys(MODELS).join(', ');
-      await safeReply(message, `Model tidak dikenal: \`${modelKey}\`\nModel yang tersedia (${provider}):\n    ${validKeys}`);
+      await safeReply(message, `Model not recognized: \`${modelKey}\`\nAvailable models (${provider}):\n    ${validKeys}`);
       return;
     }
   }
@@ -1320,18 +1321,18 @@ async function handleGenCommand(message, args, config) {
     argsCopy.splice(sizeFlagIdx, 2);
     if (!SIZES[sizeKey]) {
       const validSizes = Object.keys(SIZES).join(', ');
-      await safeReply(message, `Ukuran tidak dikenal: \`${sizeKey}\`\nUkuran yang tersedia (${provider}): ${validSizes}`);
+      await safeReply(message, `Size not recognized: \`${sizeKey}\`\nAvailable sizes (${provider}): ${validSizes}`);
       return;
     }
   }
 
-  // --steps (khusus horde) — Fewer steps = kudos lebih hemat
+  // --steps (horde only) — Fewer steps = less kudos used
   const stepsFlagIdx = argsCopy.indexOf('--steps');
   if (stepsFlagIdx !== -1 && argsCopy[stepsFlagIdx + 1]) {
     const rawSteps = Number(argsCopy[stepsFlagIdx + 1]);
     argsCopy.splice(stepsFlagIdx, 2);
     if (!Number.isFinite(rawSteps) || rawSteps < HORDE_MIN_STEPS || rawSteps > HORDE_MAX_STEPS) {
-      await safeReply(message, `Nilai --steps harus angka ${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}).\nLebih sedikit steps = kudos lebih hemat, kualitas turun sedikit.`);
+      await safeReply(message, `The --steps value must be a number between ${HORDE_MIN_STEPS} and ${HORDE_MAX_STEPS} (default ${HORDE_DEFAULT_STEPS}).\nFewer steps = less kudos used, slightly lower quality.`);
       return;
     }
     steps = Math.round(rawSteps);
@@ -1339,28 +1340,28 @@ async function handleGenCommand(message, args, config) {
 
   const prompt = argsCopy.join(' ').trim();
   if (!prompt) {
-    await safeReply(message, `Berikan prompt untuk generate gambar.\nContoh: \`b.gen a beautiful anime girl\``);
+    await safeReply(message, `Please provide a prompt to generate an image.\nExample: \`b.gen a beautiful anime girl\``);
     return;
   }
 
   const providerLabel = isHorde ? 'AI Horde' : 'Pollinations';
   const modelDef = isHorde ? (HORDE_MODELS[modelKey] || {}) : {};
-  // Hitung dulu biar user tahu berapa kudos yang bakal terpakai
+  // Calculate first so user knows how many kudos will be used
   const effSize = isHorde ? scaleHordeSize(HORDE_SIZES[sizeKey].width, HORDE_SIZES[sizeKey].height, modelDef.res === 'xl' ? 1.5 : 1) : null;
   const kudosInfo = isHorde ? ` | ~${estimateHordeKudos(effSize.width, effSize.height, steps)} kudos | steps: ${steps}` : '';
-  const resInfo = isHorde && effSize ? `\nResolusi: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
+  const resInfo = isHorde && effSize ? `\nResolution: ${effSize.width}×${effSize.height}${modelDef.res === 'xl' ? ' (XL auto-upscale)' : ''}` : '';
 
-  // Kalau kanal belum Age Restricted, Discord auto-scan & memblokir media NSFW
-  // (gambar jadi placeholder 97 byte, attachment dilepas). Peringatkan di depan.
+  // If channel not Age Restricted, Discord auto-scans & blocks NSFW media
+  // (image becomes a 97-byte placeholder, attachment dropped). Warn upfront.
   const ageRestricted = !message.channel || typeof message.channel.nsfw !== 'boolean' || message.channel.nsfw;
   const ageWarn = isHorde && !ageRestricted
-    ? '\nKanal ini belum **Age Restricted** — Discord kemungkinan besar memblokir gambar NSFW-nya. Jalankan `b.nsfw` (butuh `Manage Channels`).'
+    ? '\nThis channel is not **Age Restricted** — Discord will likely block NSFW images. Run `b.nsfw` (requires `Manage Channels`).'
     : '';
 
   // Status "generating..."
   let statusMsg;
   try {
-    statusMsg = await message.reply(`Generating gambar... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\nHorde gratis pakai antrean — bisa 5-15 menit.' : ''}${ageWarn}`);
+    statusMsg = await message.reply(`Generating image... (${providerLabel}, model: \`${modelKey}\`, size: \`${sizeKey}\`${kudosInfo})\nPrompt: \`${prompt.slice(0, 200)}\`${resInfo}${isHorde ? '\nAI Horde is free with a public queue — may take 5-15 minutes.' : ''}${ageWarn}`);
   } catch (_) {}
 
   try {
@@ -1391,8 +1392,8 @@ async function handleGenCommand(message, args, config) {
       )
       .setImage(`attachment://${filename}`)
       .setFooter({ text: (isHorde && !ageRestricted)
-        ? 'Kanal belum Age Restricted — Discord bisa saja memblokir gambarnya'
-        : (isHorde ? 'Generated via AI Horde (gratis)' : 'Generated via Pollinations (gratis)') });
+        ? 'Channel not Age Restricted — Discord may block the image'
+        : (isHorde ? 'Generated via AI Horde (free)' : 'Generated via Pollinations (free)') });
 
     try {
       await message.reply({
@@ -1402,9 +1403,9 @@ async function handleGenCommand(message, args, config) {
     } catch (sendError) {
       if (sendError && sendError.code === 50013) {
         console.warn(`Cannot send image in channel ${message.channelId}: Missing Permissions`);
-        // Jangan diam-diam sukses: user harus tahu kenapa gambarnya nggak muncul
+        // Do not silently fail: inform the user why the image cannot be delivered
         logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'send_denied', message: 'Missing Permissions (50013)' });
-        await safeReply(message, 'Gambar sudah jadi, tapi bot nggak bisa mengirimnya — kurang izin `Attach Files` / `Send Messages` di kanal ini.\n   Minta admin tambahkan izinnya, lalu ulangi command-nya.');
+        await safeReply(message, 'Image generated, but the bot cannot send it — missing `Attach Files` / `Send Messages` permissions in this channel.\n   Ask an admin to grant permissions, then try again.');
         return;
       }
       throw sendError;
@@ -1414,7 +1415,7 @@ async function handleGenCommand(message, args, config) {
   } catch (error) {
     logInteraction('gen_result', { prompt, provider, model: modelKey, result: 'error', message: error.message });
     console.error('Image generation error:', error);
-    await safeReply(message, `Gagal generate gambar: ${error.message}`);
+    await safeReply(message, `Failed to generate image: ${error.message}`);
   } finally {
     if (statusMsg) {
       try { await statusMsg.delete(); } catch (_) {}
@@ -1435,62 +1436,62 @@ function buildHelp(prefix, botUser = null) {
 
   const embed = new EmbedBuilder()
     .setColor(0xE91E63)
-    .setTitle('Bandar Bot — Panduan & Daftar Perintah')
+    .setTitle('Bandar Bot — Commands & Guide')
     .setDescription(
-      `Bot Discord untuk NSFW Gacha & AI Image Generator.\n` +
-      `Gunakan prefix \`${prefix}\` sebelum setiap perintah (contoh: \`${prefix}help\`).`
+      `Discord bot for NSFW Gacha & AI Image Generation.\n` +
+      `Use prefix \`${prefix}\` before every command (e.g. \`${prefix}help\`).`
     )
     .addFields(
       {
-        name: 'Otorisasi Channel',
+        name: 'Channel Authorization',
         value:
           `\`${prefix}nsfw\`\n` +
-          `Mengaktifkan / mematikan akses bot di kanal ini sekaligus mengatur status Age-Restricted Discord *(memerlukan izin **Manage Channels**)*.`,
+          `Toggle bot access in this channel and sync Discord Age-Restricted status *(requires **Manage Channels** permission)*.`,
       },
       {
-        name: 'Perintah Gacha',
+        name: 'Gacha Commands',
         value:
-          `- \`${prefix}gacha [query]\` — Acak gacha dari semua platform\n` +
-          `- \`${prefix}34gacha\` / \`${prefix}34g [tags...]\` — Post acak dari **Rule34**\n` +
-          `- \`${prefix}nhgacha\` / \`${prefix}nh [query] [--sort <popular|recent>]\` — Doujin dari **nHentai**\n` +
-          `- \`${prefix}poigacha\` / \`${prefix}poi [query]\` — Video/hentai dari **Nekopoi**`,
+          `- \`${prefix}gacha [query]\` — Random gacha across all platforms\n` +
+          `- \`${prefix}34gacha\` / \`${prefix}34g [tags...]\` — Random post from **Rule34**\n` +
+          `- \`${prefix}nhgacha\` / \`${prefix}nh [query] [--sort <popular|recent>]\` — Doujin from **nHentai**\n` +
+          `- \`${prefix}poigacha\` / \`${prefix}poi [query]\` — Video/hentai from **Nekopoi**`,
       },
       {
-        name: 'Tips & Filter Tag Rule34',
+        name: 'Rule34 Tags & Filters',
         value:
-          `- **Kombinasi tag:** \`${prefix}34g 2girls blue_hair\`\n` +
-          `- **Kecualikan tag:** \`${prefix}34g -ai_generated\`\n` +
-          `- **Urutan skor:** \`${prefix}34g sort:score\` atau \`sort:favcount\`\n` +
-          `- **Filter rating:** \`rating:safe\` | \`rating:questionable\` | \`rating:explicit\`\n` +
-          `*(Operator pencarian Rule34 lainnya didukung langsung)*`,
+          `- **Tag combination:** \`${prefix}34g 2girls blue_hair\`\n` +
+          `- **Exclude tag:** \`${prefix}34g -ai_generated\`\n` +
+          `- **Sort by score:** \`${prefix}34g sort:score\` or \`sort:favcount\`\n` +
+          `- **Rating filter:** \`rating:safe\` | \`rating:questionable\` | \`rating:explicit\`\n` +
+          `*(Other Rule34 search operators are supported directly)*`,
       },
       {
         name: 'AI Image Generator (`b.gen`)',
         value:
-          `**Format:** \`${prefix}gen <prompt> [opsi...]\` *(alias: \`${prefix}generate\`)*\n\n` +
-          `**Pilihan Provider:**\n` +
-          `- **\`pollinations\`** *(Default)*: Cepat, gratis & instan (filter SFW aktif).\n` +
-          `- **\`horde\`**: AI Horde gratis, **bebas NSFW / tanpa sensor**, antrean publik (~5-15 mnt).`,
+          `**Syntax:** \`${prefix}gen <prompt> [options...]\` *(alias: \`${prefix}generate\`)*\n\n` +
+          `**Providers:**\n` +
+          `- **\`pollinations\`** *(Default)*: Fast, free & instant (SFW filter active).\n` +
+          `- **\`horde\`**: AI Horde, **unfiltered NSFW**, public community queue (~5-15 min).`,
       },
       {
-        name: 'Parameter Opsi `b.gen`',
+        name: 'Parameters for `b.gen`',
         value:
-          `- \`--provider <pollinations|horde>\` — Memilih engine AI\n` +
-          `- \`--model <model>\` — Memilih model generator *(lihat daftar di bawah)*\n` +
-          `- \`--size <size>\` — Ukuran gambar:\n` +
+          `- \`--provider <pollinations|horde>\` — Select AI provider\n` +
+          `- \`--model <model>\` — Select generator model *(see list below)*\n` +
+          `- \`--size <size>\` — Image dimensions:\n` +
           `  ↳ *Pollinations:* ${pollinationsSizes}\n` +
           `  ↳ *Horde:* ${hordeSizes}\n` +
-          `- \`--steps <${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS}>\` — Sampling steps Horde *(default: ${HORDE_DEFAULT_STEPS})*`,
+          `- \`--steps <${HORDE_MIN_STEPS}-${HORDE_MAX_STEPS}>\` — Horde sampling steps *(default: ${HORDE_DEFAULT_STEPS})*`,
       },
       {
-        name: 'Pilihan Model AI Generator',
+        name: 'Available AI Models',
         value:
           `**Pollinations:** ${pollinationsModels}\n\n` +
-          `**AI Horde (Bebas NSFW):**\n` +
+          `**AI Horde (Uncensored):**\n` +
           `${hordeModelsFormatted}`,
       },
       {
-        name: 'Contoh Penggunaan',
+        name: 'Usage Examples',
         value:
           `\`\`\`bash\n` +
           `${prefix}34g 2girls blue_hair sort:score\n` +
@@ -1502,7 +1503,7 @@ function buildHelp(prefix, botUser = null) {
       }
     )
     .setFooter({
-      text: `Bandar Bot • Ketik ${prefix}help kapan saja untuk membuka panduan ini`,
+      text: `Bandar Bot • Type ${prefix}help at any time to open this guide`,
     })
     .setTimestamp();
 
@@ -1522,7 +1523,7 @@ async function safeReply(message, content) {
     await message.reply(payload);
   } catch (error) {
     const detail = error && error.code === 50013
-      ? 'Missing Permissions (50013) — bot tidak punya izin Send Messages/Embed Links di channel ini.'
+      ? 'Missing Permissions (50013) — bot lacks Send Messages/Embed Links permission in this channel.'
       : (error && error.message ? error.message : String(error));
     console.warn(`Cannot reply to message in channel ${message.channelId}: ${detail}`);
     try {
@@ -1605,19 +1606,19 @@ async function safeReplyWithEmbed(message, embed) {
 }
 
 // ─── Self-Destruct Server (Nuke) ─────────────────────────────────────────────
-// Alur bertahap:
-//   1. Owner/Admin jalankan `b.nuke`            → bot minta kode nuklir via DM.
-//   2. Owner kirim kode nuklir ke DM bot        → pesan dihapus, kode diverifikasi.
-//   3. Bot tanya "yakin?"                        → owner jalankan `b.nuke confirm`.
-//   4. Countdown 10 detik (bisa dibatalkan `b.nuke abort`) → seluruh channel dihapus.
+// Step-by-step flow:
+//   1. Owner/Admin runs `b.nuke`                 → bot requests nuclear code via DM.
+//   2. Owner sends nuclear code to bot DM        → message deleted, code verified.
+//   3. Bot asks confirmation                     → owner runs `b.nuke confirm`.
+//   4. Countdown 10 seconds (cancelable via `b.nuke abort`) → all channels deleted.
 //
-// Kode nuklir bersifat RAHASIA: disimpan di config.json ("nukePassword") atau
-// environment variable NUKE_PASSWORD. Tidak pernah ditampilkan di help/README.
-const NUKE_SESSION_TTL_MS = 120000;      // kedaluwarsa sesi (password / konfirmasi)
-const NUKE_COUNTDOWN_SECONDS = 10;       // durasi countdown
-const NUKE_MAX_PASSWORD_ATTEMPTS = 3;    // batas salah password
+// Nuclear code is SECRET: stored in config.json ("nukePassword") or
+// environment variable NUKE_PASSWORD. Never shown in help/README.
+const NUKE_SESSION_TTL_MS = 120000;      // session expiration (password / confirmation)
+const NUKE_COUNTDOWN_SECONDS = 10;       // countdown duration
+const NUKE_MAX_PASSWORD_ATTEMPTS = 3;    // max incorrect password attempts
 
-let discordClient = null;                // diisi di main(), dipakai untuk kirim ke channel
+let discordClient = null;                // populated in main(), used for channel broadcasts
 const nukeSessions = new Map();          // userId -> session
 
 function getNukePassword(config) {
@@ -1654,11 +1655,11 @@ async function notifyNukeSession(session, text) {
       await channel.send(text);
     }
   } catch (_) {
-    // Channel sudah tidak ada / tidak bisa diakses — abaikan.
+    // Channel no longer exists / not accessible — abaikan.
   }
 }
 
-// Langkah 1: `b.nuke` — minta kode nuklir lewat DM.
+// Step 1: `b.nuke` — request nuclear code via DM.
 async function handleNukeStart(message, config) {
   const guild = message.guild;
 
@@ -1669,7 +1670,7 @@ async function handleNukeStart(message, config) {
   if (!isGuildOwner && !isAdmin) {
     await safeReply(
       message,
-      '**Akses ditolak.** Command ini hanya untuk **Server Owner** atau member dengan izin **Administrator**.'
+      '**Access denied.** This command is restricted to **Server Owner** or members with **Administrator** permission.'
     );
     return;
   }
@@ -1677,7 +1678,7 @@ async function handleNukeStart(message, config) {
   if (!getNukePassword(config)) {
     await safeReply(
       message,
-      'Fitur self-destruct belum aktif. Set kode rahasia lewat `nukePassword` di config.json atau env `NUKE_PASSWORD`.'
+      'Self-destruct is not configured. Set a secret code via `nukePassword` in config.json or `NUKE_PASSWORD` env.'
     );
     return;
   }
@@ -1705,15 +1706,15 @@ async function handleNukeStart(message, config) {
 
   await safeReply(
     message,
-    '**Self-destruct diinisiasi.**\n' +
-      'Untuk verifikasi, kirim **kode nuklir** ke **DM bot** ini.\n' +
-      'Sesi berlaku 2 menit.'
+    '**Self-destruct initiated.**\n' +
+      'For verification, send the **nuclear code** to this **bot\'s DM**.\n' +
+      'Session expires in 2 minutes.'
   );
 
   try {
     await message.author.send(
-      'Masukkan **kode nuklir** untuk mengonfirmasi self-destruct.\n' +
-        'Pesan ini akan dihapus otomatis demi keamanan.'
+      'Enter your **nuclear code** to confirm self-destruct.\n' +
+        'This message will be deleted automatically for security.'
     );
   } catch (error) {
     logInteraction('error', {
@@ -1723,21 +1724,21 @@ async function handleNukeStart(message, config) {
     });
     await safeReply(
       message,
-      'Bot tidak bisa mengirim DM (DM kamu mungkin tertutup).\n   Buka DM bot lalu kirim kode nuklir di sana.'
+      'Bot cannot send you a DM (your DMs might be closed).\n   Please open bot DMs and send the nuclear code there.'
     );
   }
 }
 
-// Langkah 2: pesan DM berisi kode nuklir.
+// Step 2: DM message containing nuclear code.
 async function handleNukeDm(message, config) {
   const session = nukeSessions.get(message.author.id);
   if (!session || session.stage !== 'awaiting_password') {
-    return; // bukan bagian dari proses nuke — diamkan.
+    return; // not part of nuke session — ignore.
   }
 
   const candidate = message.content.trim();
 
-  // Hapus pesan berisi kode dari DM supaya tidak tersimpan.
+  // Delete message containing code from DM so it's not stored.
   try {
     await message.delete();
   } catch (_) {}
@@ -1748,10 +1749,10 @@ async function handleNukeDm(message, config) {
 
     if (session.attempts >= NUKE_MAX_PASSWORD_ATTEMPTS) {
       clearNukeSession(session);
-      await message.author.send('Kode nuklir salah 3x. Self-destruct dibatalkan.').catch(() => {});
+      await message.author.send('Incorrect nuclear code 3 times. Self-destruct cancelled.').catch(() => {});
       await notifyNukeSession(
         session,
-        `<@${message.author.id}> — kode nuklir **SALAH** ${NUKE_MAX_PASSWORD_ATTEMPTS}x. Self-destruct dibatalkan.`
+        `<@${message.author.id}> — nuclear code **INCORRECT** ${NUKE_MAX_PASSWORD_ATTEMPTS}x. Self-destruct cancelled.`
       );
       return;
     }
@@ -1760,18 +1761,18 @@ async function handleNukeDm(message, config) {
 
     await message.author
       .send(
-        `Kode nuklir **SALAH** (percobaan ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, sisa ${remaining}). Coba lagi.`
+        `Nuclear code **INCORRECT** (attempt ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, ${remaining} left). Try again.`
       )
       .catch(() => {});
 
     await notifyNukeSession(
       session,
-      `<@${message.author.id}> — kode nuklir **SALAH** (percobaan ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, sisa ${remaining}). Self-destruct belum lanjut.`
+      `<@${message.author.id}> — nuclear code **INCORRECT** (attempt ${session.attempts}/${NUKE_MAX_PASSWORD_ATTEMPTS}, ${remaining} left). Self-destruct paused.`
     );
     return;
   }
 
-  // Password benar → tahap konfirmasi.
+  // Correct password -> confirmation stage.
   session.stage = 'awaiting_confirm';
   scheduleNukeExpiry(session, NUKE_SESSION_TTL_MS);
 
@@ -1782,28 +1783,28 @@ async function handleNukeDm(message, config) {
 
   await message.author
     .send(
-      '**Kode nuklir BENAR.**\n' +
-        'Kembali ke server dan konfirmasi: **Apakah kamu yakin ingin menghancurkan server ini?**\n' +
-        `Jalankan \`b.nuke confirm\` dalam 2 menit untuk memulai countdown ${NUKE_COUNTDOWN_SECONDS} detik.`
+      '**Nuclear code CORRECT.**\n' +
+        'Return to the server and confirm: **Are you sure you want to destroy this server?**\n' +
+        `Run \`b.nuke confirm\` within 2 minutes to start the ${NUKE_COUNTDOWN_SECONDS}-second countdown.`
     )
     .catch(() => {});
 
   await notifyNukeSession(
     session,
-    `<@${message.author.id}> — kode nuklir **BENAR**.\n**Apakah kamu yakin ingin menghancurkan server ini?**\nJalankan \`b.nuke confirm\` dalam 2 menit untuk memulai countdown ${NUKE_COUNTDOWN_SECONDS} detik.`
+    `<@${message.author.id}> — nuclear code **CORRECT**.\n**Are you sure you want to destroy this server?**\nRun \`b.nuke confirm\` within 2 minutes to start the ${NUKE_COUNTDOWN_SECONDS}-second countdown.`
   );
 }
 
-// Langkah 3 + 4: `b.nuke confirm` — tanya "yakin" sudah lewat password, sekarang countdown.
+// Step 3 + 4: `b.nuke confirm` — password verified, starting countdown.
 async function handleNukeConfirm(message, config) {
   const session = nukeSessions.get(message.author.id);
   if (!session || session.stage !== 'awaiting_confirm') {
-    await safeReply(message, 'Tidak ada self-destruct yang menunggu konfirmasi. Jalankan `b.nuke` dulu.');
+    await safeReply(message, 'No pending self-destruct awaiting confirmation. Run `b.nuke` first.');
     return;
   }
 
   if (session.guildId !== message.guildId || session.channelId !== message.channelId) {
-    await safeReply(message, 'Konfirmasi harus dijalankan di channel tempat `b.nuke` dimulai.');
+    await safeReply(message, 'Confirmation must be run in the channel where `b.nuke` was started.');
     return;
   }
 
@@ -1812,12 +1813,12 @@ async function handleNukeConfirm(message, config) {
     message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)
   );
   if (!isGuildOwner && !isAdmin) {
-    await safeReply(message, 'Akses ditolak. Butuh **Server Owner** atau izin **Administrator**.');
+    await safeReply(message, 'Access denied. Requires **Server Owner** or **Administrator** permission.');
     return;
   }
 
   if (session.countdownInterval) {
-    await safeReply(message, 'Countdown sudah berjalan.');
+    await safeReply(message, 'Countdown is already running.');
     return;
   }
 
@@ -1834,12 +1835,12 @@ async function handleNukeConfirm(message, config) {
 
   let remaining = NUKE_COUNTDOWN_SECONDS;
   const statusMsg = await message.reply(
-    `**Self-destruct dimulai dalam ${remaining} detik.**\nBatalkan dengan \`b.nuke abort\`.`
+    `**Self-destruct starting in ${remaining} seconds.**\nCancel with \`b.nuke abort\`.`
   );
   session.countdownMessage = statusMsg;
 
   session.countdownInterval = setInterval(async () => {
-    // Dibatalkan / sesi diganti?
+    // Cancelled / session replaced?
     if (nukeSessions.get(session.userId) !== session || session.stage !== 'countdown') {
       clearInterval(session.countdownInterval);
       session.countdownInterval = null;
@@ -1851,7 +1852,7 @@ async function handleNukeConfirm(message, config) {
     if (remaining > 0) {
       try {
         await statusMsg.edit(
-          `Self-destruct dalam **${remaining}** detik...\nBatalkan dengan \`b.nuke abort\`.`
+          `Self-destruct in **${remaining}** seconds...\nCancel with \`b.nuke abort\`.`
         );
       } catch (_) {}
       return;
@@ -1860,16 +1861,16 @@ async function handleNukeConfirm(message, config) {
     clearInterval(session.countdownInterval);
     session.countdownInterval = null;
 
-    // Cek ulang: owner mungkin sudah menekan abort saat await di atas.
+    // Re-check: owner might have pressed abort during the await above.
     if (nukeSessions.get(session.userId) !== session) {
       return;
     }
 
     try {
-      await statusMsg.edit('**INITIATE-HUMAN-INSTRUMENTALITY** — Menghapus seluruh channel dan role sekarang...');
+      await statusMsg.edit('**INITIATE-HUMAN-INSTRUMENTALITY** — Deleting all channels and roles now...');
     } catch (_) {}
 
-    // Cek ulang sekali lagi sebelum eksekusi final (abort bisa masuk saat edit).
+    // Double-check before final execution (abort can trigger during edit).
     if (nukeSessions.get(session.userId) !== session) {
       return;
     }
@@ -1879,11 +1880,11 @@ async function handleNukeConfirm(message, config) {
   }, 1000);
 }
 
-// `b.nuke abort` — membatalkan countdown / sesi.
+// `b.nuke abort` — cancel countdown / session.
 async function handleNukeAbort(message) {
   const session = nukeSessions.get(message.author.id);
   if (!session) {
-    await safeReply(message, 'Tidak ada proses self-destruct yang aktif.');
+    await safeReply(message, 'No active self-destruct process.');
     return;
   }
 
@@ -1899,12 +1900,12 @@ async function handleNukeAbort(message) {
   await safeReply(
     message,
     wasCountingDown
-      ? '**Countdown dibatalkan.** Self-destruct tidak dilanjutkan.'
-      : 'Proses self-destruct dibatalkan.'
+      ? '**Countdown cancelled.** Self-destruct not continued.'
+      : 'Self-destruct process cancelled.'
   );
 }
 
-// Eksekusi akhir: hapus semua channel (pesan ikut terhapus) lalu semua role.
+// Final execution: delete all channels (messages deleted as well) then all roles.
 async function executeNuke(guild, invokeChannelId, meta = {}) {
   let channelsDeleted = 0;
   let channelsFailed = 0;
@@ -1917,11 +1918,11 @@ async function executeNuke(guild, invokeChannelId, meta = {}) {
     guild: { id: guild.id, name: guild.name },
   });
 
-  // 1) Hapus seluruh channel (pesan di dalamnya ikut terhapus).
+  // 1) Delete all channels (messages inside them also deleted).
   try {
     const channels = await guild.channels.fetch();
 
-    // Channel tempat command dipanggil dihapus paling akhir.
+    // The channel where the command was invoked is deleted last.
     const ordered = [...channels.values()].sort((a, b) => {
       if (!a) return 1;
       if (!b) return -1;
@@ -1937,17 +1938,17 @@ async function executeNuke(guild, invokeChannelId, meta = {}) {
         channelsDeleted += 1;
       } catch (error) {
         channelsFailed += 1;
-        console.warn(`Nuke: gagal menghapus channel ${channel.id}: ${error.message}`);
+        console.warn(`Nuke: failed to delete channel ${channel.id}: ${error.message}`);
       }
     }
   } catch (error) {
     console.error('Nuke (channels) error:', error);
   }
 
-  // 2) Hapus seluruh role yang bisa dihapus.
-  //    - @everyone tidak bisa dihapus.
-  //    - Role "managed" (bot/integrasi) tidak bisa dihapus.
-  //    - Role yang posisinya >= role tertinggi bot tidak bisa dihapus.
+  // 2) Delete all deletable roles.
+  //    - @everyone cannot be deleted.
+  //    - Role "managed" (bot/integration) cannot be deleted.
+  //    - Role with position >= bot's highest role cannot be deleted.
   try {
     const roles = await guild.roles.fetch();
     const everyoneId = guild.roles.everyone ? guild.roles.everyone.id : guild.id;
@@ -1965,7 +1966,7 @@ async function executeNuke(guild, invokeChannelId, meta = {}) {
         rolesDeleted += 1;
       } catch (error) {
         rolesFailed += 1;
-        console.warn(`Nuke: gagal menghapus role ${role.id}: ${error.message}`);
+        console.warn(`Nuke: failed to delete role ${role.id}: ${error.message}`);
       }
     }
   } catch (error) {
@@ -1983,6 +1984,363 @@ async function executeNuke(guild, invokeChannelId, meta = {}) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Purge Messages ────────────────────────────────────────────────────────────
+// Flow mirrors nuke:
+//   1. Owner/Admin runs `b.purge <count>` -> bot requests purge code via DM.
+//   2. Owner sends code to bot DM        -> messages deleted, code verified.
+//   3. Bot asks confirmation             -> owner runs `b.purge confirm`.
+//   4. Countdown 10 seconds (cancelable via `b.purge abort`) -> delete N latest messages.
+//
+// Purge code is configured via config.json ("purgePassword") or PURGE_PASSWORD env.
+const PURGE_SESSION_TTL_MS = 120000;
+const PURGE_COUNTDOWN_SECONDS = 10;
+const PURGE_MAX_PASSWORD_ATTEMPTS = 3;
+const PURGE_MAX_MESSAGES = 1000; // safe limit (Discord bulk delete max 100 per request, loops if needed)
+
+const purgeSessions = new Map();
+
+function getPurgePassword(config) {
+  return process.env.PURGE_PASSWORD || (config && config.purgePassword) || '';
+}
+
+function clearPurgeSession(session) {
+  if (!session) return;
+  if (session.timer) clearTimeout(session.timer);
+  if (session.countdownInterval) clearInterval(session.countdownInterval);
+  purgeSessions.delete(session.userId);
+}
+
+function schedulePurgeExpiry(session, ms) {
+  if (session.timer) clearTimeout(session.timer);
+  session.timer = setTimeout(() => clearPurgeSession(session), ms);
+  if (typeof session.timer.unref === 'function') session.timer.unref();
+}
+
+async function notifyPurgeSession(session, text) {
+  if (!discordClient) return;
+  try {
+    const channel = await discordClient.channels.fetch(session.channelId);
+    if (channel && channel.isTextBased()) {
+      await channel.send(text);
+    }
+  } catch (_) {}
+}
+
+// Step 1: `b.purge <count>` — request purge code via DM.
+async function handlePurgeStart(message, args, config) {
+  const guild = message.guild;
+
+  const isGuildOwner = guild.ownerId === message.author.id;
+  const isAdmin = Boolean(
+    message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)
+  );
+  if (!isGuildOwner && !isAdmin) {
+    await safeReply(
+      message,
+      '**Access denied.** This command is restricted to **Server Owner** or members with **Administrator** permission.'
+    );
+    return;
+  }
+
+  if (!getPurgePassword(config)) {
+    await safeReply(
+      message,
+      'Purge is not configured. Set a secret code via `purgePassword` in config.json or `PURGE_PASSWORD` env.'
+    );
+    return;
+  }
+
+  // Parse message count
+  const countArg = args[0];
+  const count = parseInt(countArg, 10);
+  if (!countArg || isNaN(count) || count < 1 || count > PURGE_MAX_MESSAGES) {
+    await safeReply(
+      message,
+      `Format: \`b.purge <1-${PURGE_MAX_MESSAGES}>\` — number of messages to delete.`
+    );
+    return;
+  }
+
+  const existing = purgeSessions.get(message.author.id);
+  if (existing) clearPurgeSession(existing);
+
+  const session = {
+    userId: message.author.id,
+    guildId: guild.id,
+    guildName: guild.name,
+    channelId: message.channelId,
+    count,
+    stage: 'awaiting_password',
+    attempts: 0,
+    timer: null,
+    countdownInterval: null,
+  };
+  purgeSessions.set(session.userId, session);
+  schedulePurgeExpiry(session, PURGE_SESSION_TTL_MS);
+
+  logInteraction('purge_init', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: guild.id, name: guild.name },
+    count,
+  });
+
+  await safeReply(
+    message,
+    `**Purge of ${count} messages initiated.**\n` +
+      'For verification, send the **purge code** to this **bot\'s DM**.\n' +
+      'Session expires in 2 minutes.'
+  );
+
+  try {
+    await message.author.send(
+      `Enter the **purge code** to confirm deletion of ${count} messages.\n` +
+        'This message will be deleted automatically for security.'
+    );
+  } catch (error) {
+    logInteraction('error', {
+      context: 'purge_dm_send',
+      userId: message.author.id,
+      message: error && error.message ? error.message : String(error),
+    });
+    await safeReply(
+      message,
+      'Bot cannot send you a DM (your DMs might be closed).\n   Please open bot DMs and send the purge code there.'
+    );
+  }
+}
+
+// Step 2: DM message containing purge code.
+async function handlePurgeDm(message, config) {
+  const session = purgeSessions.get(message.author.id);
+  if (!session || session.stage !== 'awaiting_password') {
+    return;
+  }
+
+  const candidate = message.content.trim();
+
+  try {
+    await message.delete();
+  } catch (_) {}
+
+  const password = getPurgePassword(config);
+  if (!password || !timingSafeEqualStr(candidate, password)) {
+    session.attempts += 1;
+
+    if (session.attempts >= PURGE_MAX_PASSWORD_ATTEMPTS) {
+      clearPurgeSession(session);
+      await message.author.send('Incorrect purge code 3 times. Process cancelled.').catch(() => {});
+      await notifyPurgeSession(
+        session,
+        `<@${message.author.id}> — purge code **INCORRECT** ${PURGE_MAX_PASSWORD_ATTEMPTS}x. Process cancelled.`
+      );
+      return;
+    }
+
+    const remaining = PURGE_MAX_PASSWORD_ATTEMPTS - session.attempts;
+
+    await message.author
+      .send(`Purge code **INCORRECT** (attempt ${session.attempts}/${PURGE_MAX_PASSWORD_ATTEMPTS}, ${remaining} left). Try again.`)
+      .catch(() => {});
+
+    await notifyPurgeSession(
+      session,
+      `<@${message.author.id}> — purge code **INCORRECT** (attempt ${session.attempts}/${PURGE_MAX_PASSWORD_ATTEMPTS}, ${remaining} left). Process paused.`
+    );
+    return;
+  }
+
+  // Correct password -> confirmation stage.
+  session.stage = 'awaiting_confirm';
+  schedulePurgeExpiry(session, PURGE_SESSION_TTL_MS);
+
+  logInteraction('purge_password_ok', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+    count: session.count,
+  });
+
+  await message.author
+    .send(
+      `**Purge code CORRECT.**\n` +
+        `Return to the server and confirm: **Are you sure you want to delete the last ${session.count} messages?**\n` +
+        `Run \`b.purge confirm\` within 2 minutes to start the ${PURGE_COUNTDOWN_SECONDS}-second countdown.`
+    )
+    .catch(() => {});
+
+  await notifyPurgeSession(
+    session,
+    `<@${message.author.id}> — purge code **CORRECT**.\n**Are you sure you want to delete the last ${session.count} messages?**\nRun \`b.purge confirm\` within 2 minutes to start the ${PURGE_COUNTDOWN_SECONDS}-second countdown.`
+  );
+}
+
+// Step 3 + 4: `b.purge confirm` — countdown.
+async function handlePurgeConfirm(message, config) {
+  const session = purgeSessions.get(message.author.id);
+  if (!session || session.stage !== 'awaiting_confirm') {
+    await safeReply(message, 'No pending purge awaiting confirmation. Run `b.purge <count>` first.');
+    return;
+  }
+
+  if (session.guildId !== message.guildId || session.channelId !== message.channelId) {
+    await safeReply(message, 'Confirmation must be run in the channel where `b.purge` was started.');
+    return;
+  }
+
+  const isGuildOwner = message.guild.ownerId === message.author.id;
+  const isAdmin = Boolean(
+    message.member && message.member.permissions.has(PermissionFlagsBits.Administrator)
+  );
+  if (!isGuildOwner && !isAdmin) {
+    await safeReply(message, 'Access denied. Requires **Server Owner** or **Administrator** permission.');
+    return;
+  }
+
+  if (session.countdownInterval) {
+    await safeReply(message, 'Countdown is already running.');
+    return;
+  }
+
+  if (session.timer) {
+    clearTimeout(session.timer);
+    session.timer = null;
+  }
+  session.stage = 'countdown';
+
+  logInteraction('purge_countdown', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+    count: session.count,
+  });
+
+  let remaining = PURGE_COUNTDOWN_SECONDS;
+  const statusMsg = await message.reply(
+    `**Purge of ${session.count} messages starting in ${remaining} seconds.**\nCancel with \`b.purge abort\`.`
+  );
+  session.countdownMessage = statusMsg;
+
+  session.countdownInterval = setInterval(async () => {
+    if (purgeSessions.get(session.userId) !== session || session.stage !== 'countdown') {
+      clearInterval(session.countdownInterval);
+      session.countdownInterval = null;
+      return;
+    }
+
+    remaining -= 1;
+
+    if (remaining > 0) {
+      try {
+        await statusMsg.edit(
+          `Purge of ${session.count} messages in **${remaining}** seconds...\nCancel with \`b.purge abort\`.`
+        );
+      } catch (_) {}
+      return;
+    }
+
+    clearInterval(session.countdownInterval);
+    session.countdownInterval = null;
+
+    if (purgeSessions.get(session.userId) !== session) {
+      return;
+    }
+
+    try {
+      await statusMsg.edit(`**INITIATE-HUMAN-INSTRUMENTALITY** — Deleting ${session.count} messages now...`);
+    } catch (_) {}
+
+    if (purgeSessions.get(session.userId) !== session) {
+      return;
+    }
+
+    purgeSessions.delete(session.userId);
+    await executePurge(message.guild, message.channelId, session.count, { user: message.author });
+  }, 1000);
+}
+
+// `b.purge abort` — cancel countdown / session.
+async function handlePurgeAbort(message) {
+  const session = purgeSessions.get(message.author.id);
+  if (!session) {
+    await safeReply(message, 'No active purge process.');
+    return;
+  }
+
+  const wasCountingDown = session.stage === 'countdown';
+  clearPurgeSession(session);
+
+  logInteraction('purge_abort', {
+    user: { id: message.author.id, username: message.author.username },
+    guild: { id: session.guildId, name: session.guildName },
+    stage: wasCountingDown ? 'countdown' : session.stage,
+    count: session.count,
+  });
+
+  await safeReply(
+    message,
+    wasCountingDown
+      ? `**Countdown cancelled.** Purge of ${session.count} messages aborted.`
+      : 'Purge process cancelled.'
+  );
+}
+
+// Final execution: delete N latest messages in channel.
+async function executePurge(guild, channelId, count, meta = {}) {
+  let deleted = 0;
+  let failed = 0;
+
+  logInteraction('purge_start', {
+    user: meta.user ? { id: meta.user.id, username: meta.user.username } : undefined,
+    guild: { id: guild.id, name: guild.name },
+    count,
+  });
+
+  try {
+    const channel = await guild.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error('Channel not found or not a text channel.');
+    }
+
+    // Discord bulk delete max 100 per request, loop if >100
+    let remaining = count;
+    while (remaining > 0) {
+      const fetchCount = Math.min(100, remaining);
+      const messages = await channel.messages.fetch({ limit: fetchCount });
+      const deletable = messages.filter((m) => !m.system && (Date.now() - m.createdTimestamp) < 1209600000); // < 14 days
+      
+      if (deletable.size === 0) break;
+
+      try {
+        await channel.bulkDelete(deletable, true);
+        deleted += deletable.size;
+        remaining -= deletable.size;
+      } catch (error) {
+        failed += deletable.size;
+        console.warn(`Purge: failed to delete batch: ${error.message}`);
+        break;
+      }
+
+      if (deletable.size < fetchCount) break; // no more older messages
+    }
+  } catch (error) {
+    console.error('Purge error:', error);
+    failed = count; // treat all as failed on fatal error
+  }
+
+  logInteraction('purge_result', { guildId: guild.id, deleted, failed, requested: count });
+
+  // Send summary to channel (if it still exists)
+  if (failed > 0 || deleted > 0) {
+    try {
+      const channel = await guild.channels.fetch(channelId);
+      if (channel && channel.isTextBased()) {
+        await channel.send(
+          `Purge completed: **${deleted}** messages deleted${failed > 0 ? `, **${failed}** failed (messages >14 days old or permission issues)` : ''}.`
+        );
+      }
+    } catch (_) {}
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function main() {
   process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -1995,11 +2353,11 @@ async function main() {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
-      // Wajib agar bot bisa MENERIMA pesan DM (dipakai untuk verifikasi kode nuklir).
+      // Required so the bot can RECEIVE DM messages (used for code verification).
       GatewayIntentBits.DirectMessages,
     ],
-    // DM channel tidak di-cache by default; tanpa partial ini messageCreate di DM
-    // tidak akan dipancarkan ke handler.
+    // DM channels not cached by default; without this partial messageCreate in DM
+    // will not be dispatched to handler.
     partials: [Partials.Channel],
     sweepers: {
       Messages: {
@@ -2015,7 +2373,7 @@ async function main() {
 
   discordClient = client;
 
-  client.once('ready', () => {
+  client.once(Events.ClientReady, () => {
     if (!client.user) {
       return;
     }
@@ -2036,9 +2394,10 @@ async function main() {
       return;
     }
 
-    // DM: hanya dipakai untuk verifikasi kode nuklir self-destruct.
+    // DM: used for nuclear and purge code verification.
     if (!message.guild) {
       await handleNukeDm(message, config);
+      await handlePurgeDm(message, config);
       return;
     }
 
@@ -2078,34 +2437,34 @@ async function main() {
         const hasPermission = message.member && message.member.permissions.has(PermissionFlagsBits.ManageChannels);
         
         if (!isOwner && !hasPermission) {
-          await safeReply(message, 'Butuh izin `Manage Channels` untuk pakai command ini.');
+          await safeReply(message, 'Requires `Manage Channels` permission to use this command.');
           return;
         }
 
-        // Age restriction native Discord WAJIB ikut di-toggle: kalau kanal tidak
-        // ditandai NSFW, Discord auto-scan dan memblokir gambar NSFW hasil generate
-        // (media di-encrypt, attachment dilepas, user cuma lihat placeholder).
+        // Discord native age restriction MUST be toggled: if channel not
+        // marked NSFW, Discord auto-scans and blocks generated NSFW images
+        // (media encrypted, attachment dropped, user sees placeholder).
         const syncNativeFlag = async (enabled) => {
           try {
             await message.channel.edit({ nsfw: enabled });
             return enabled
-              ? 'Kanal juga ditandai **Age Restricted (NSFW)** di Discord — gambar NSFW sekarang tampil normal.'
-              : 'Age Restricted (NSFW) di Discord dimatikan untuk kanal ini.';
+              ? 'Channel marked as **Age Restricted (NSFW)** in Discord — NSFW images will now display correctly.'
+              : 'Age Restricted (NSFW) in Discord disabled for this channel.';
           } catch (err) {
-            return `Gagal ubah flag Age Restricted: \`${err.message}\`\n   → Discord kemungkinan tetap memblokir gambar NSFW di kanal ini.`;
+            return `Failed to change Age Restricted flag: \`${err.message}\`\n   → Discord may continue to block NSFW images in this channel.`;
           }
         };
 
         if (allowlist.has(message.channelId)) {
           allowlist.delete(message.channelId);
           await saveAllowlist(allowlist);
-          await safeReply(message, `Akses NSFW bot **dimatikan** untuk kanal ini.\n${await syncNativeFlag(false)}`);
+          await safeReply(message, `NSFW bot access **disabled** for this channel.\n${await syncNativeFlag(false)}`);
           return;
         }
 
         allowlist.add(message.channelId);
         await saveAllowlist(allowlist);
-        await safeReply(message, `Akses NSFW bot **dinyalakan** untuk kanal ini.\n${await syncNativeFlag(true)}`);
+        await safeReply(message, `NSFW bot access **enabled** for this channel.\n${await syncNativeFlag(true)}`);
         return;
       }
 
@@ -2120,10 +2479,28 @@ async function main() {
           return;
         }
         if (rest.length > 0) {
-          await safeReply(message, 'Format: `b.nuke` (mulai) | `b.nuke confirm` | `b.nuke abort`.');
+          await safeReply(message, 'Format: `b.nuke` (start) | `b.nuke confirm` | `b.nuke abort`.');
           return;
         }
         await handleNukeStart(message, config);
+        return;
+      }
+
+      if (command === 'purge') {
+        const sub = (rest[0] || '').toLowerCase();
+        if (sub === 'confirm') {
+          await handlePurgeConfirm(message, config);
+          return;
+        }
+        if (sub === 'abort' || sub === 'cancel' || sub === 'stop') {
+          await handlePurgeAbort(message);
+          return;
+        }
+        if (rest.length > 0 && sub === 'confirm') {
+          await safeReply(message, 'Format: `b.purge confirm`');
+          return;
+        }
+        await handlePurgeStart(message, rest, config);
         return;
       }
 
@@ -2133,7 +2510,7 @@ async function main() {
       }
 
       if (!allowlist.has(message.channelId)) {
-        await safeReply(message, 'Kanal ini belum diotorisasi. Jalankan `b.nsfw` dulu (butuh izin `Manage Channels`).');
+        await safeReply(message, 'Channel not authorized. Run `b.nsfw` first (requires `Manage Channels` permission).');
         return;
       }
 

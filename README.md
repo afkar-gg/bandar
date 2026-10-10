@@ -17,16 +17,27 @@ Prefix-only Discord bot with channel authorization and random NSFW gacha command
 
 ## ⚠️ Self-Destruct (Nuke)
 
-Command darurat yang menghapus **seluruh channel** (beserta semua pesannya) dan **seluruh role** yang bisa dihapus di server. Dilindungi beberapa lapis:
+Emergency command that deletes **all channels** (including all messages) and **all deletable roles** in the server. Protected by multiple layers:
 
-1. `b.nuke` — hanya bisa dijalankan oleh **Server Owner** atau member dengan izin **Administrator**. Bot lalu meminta kode nuklir lewat **DM**.
-2. Kirim **kode nuklir** ke DM bot. Pesan DM otomatis dihapus. Bot langsung memberi tahu **BENAR** atau **SALAH** (via DM dan channel server); salah 3x membatalkan proses.
-3. Setelah kode benar, bot meminta konfirmasi: jalankan `b.nuke confirm`.
-4. Bot menjalankan **countdown 10 detik** yang bisa dibatalkan kapan saja dengan `b.nuke abort` (atau `b.abort`).
+1. `b.nuke` — only executable by **Server Owner** or members with **Administrator** permission. Bot then requests nuclear code via **DM**.
+2. Kirim **kode nuklir** ke DM bot. DM message auto-deleted. Bot immediately reports **CORRECT** or **INCORRECT** (via DM and server channel); 3 wrong attempts cancels the process.
+3. After correct code, bot asks for confirmation: run `b.nuke confirm`.
+4. Bot runs a **10-second countdown** cancellable anytime with `b.nuke abort` (or `b.abort`).
 
-Role `@everyone`, role yang dikelola bot/integrasi, dan role di atas role bot tidak dihapus.
+Role `@everyone`, bot/integration-managed roles, and roles above the bot's highest role are not deleted.
 
-Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat `nukePassword` di `config.json`, atau lebih aman lewat environment variable `NUKE_PASSWORD`. Sesi verifikasi kedaluwarsa dalam 2 menit.
+Nuclear code is **secret** and not shown in help/README. Set via `nukePassword` in `config.json`, or more securely via environment variable `NUKE_PASSWORD`. Verification session expires in 2 minutes.
+
+## ⚠️ Purge Messages
+
+Command to delete **N latest messages** in channel (max 1000). Uses the same security mechanism as nuke:
+
+1. `b.purge <jumlah>` — hanya **Server Owner** atau **Administrator**. Bot minta kode purge lewat **DM**.
+2. Send **purge code** to bot DM. DM auto-deleted. Bot reports **CORRECT**/**INCORRECT** (DM + channel); 3 wrong attempts cancels.
+3. After correct code, bot asks "sure?" → run `b.purge confirm`.
+4. **Countdown 10 detik** (bisa dibatalkan `b.purge abort` / `b.abort`) → hapus pesan.
+
+Pesan >14 hari tidak bisa dihapus massal (batasan Discord). Purge code is separate from nuke: `purgePassword` in config.json or env `PURGE_PASSWORD`.
 
 ## Setup Nuke
 
@@ -41,13 +52,26 @@ Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat
        "nukePassword": "kode-rahasia-anda"
      }
      ```
-   - Jika tidak diset, fitur nuke nonaktif dan `b.nuke` akan menolak.
+   - If not set, nuke feature is disabled and `b.nuke` will reject.
 
-2. **Pastikan bot punya permission**:
-   - `Manage Channels` — wajib untuk hapus channel.
-   - `Manage Roles` — wajib untuk hapus role.
-   - `Send Messages` & `View Channel` — untuk kirim balasan & notifikasi.
-   - Praktisnya: beri role **Administrator** ke bot.
+2. **Set kode purge** (pilih salah satu, terpisah dari nuklir):
+   - **Environment variable** (direkomendasikan):
+     ```bash
+     export PURGE_PASSWORD="kode-purge-anda"
+     ```
+   - **Atau di `config.json`**:
+     ```json
+     {
+       "purgePassword": "kode-purge-anda"
+     }
+     ```
+   - If not set, purge feature is disabled and `b.purge` will reject.
+
+3. **Pastikan bot punya permission**:
+   - `Manage Channels` — required to delete channels.
+   - `Manage Roles` — required to delete roles.
+   - `Send Messages` & `View Channel` — for sending replies & notifications.
+   - Practically: give bot **Administrator** role.
 
 3. **User harus mengizinkan DM** dari member server (Settings → Privacy → "Allow direct messages from server members"), karena kode nuklir dikirim lewat DM.
 
@@ -63,7 +87,7 @@ Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat
 - Rule34 API credentials (`user_id` and `api_key`) from https://rule34.xxx/index.php?page=account&s=options
 - Discord Developer Portal intents:
   - `MESSAGE CONTENT INTENT` enabled
-  - `DIRECT MESSAGES` intent is requested in code (no portal toggle needed) — diperlukan agar bot bisa menerima kode nuklir lewat DM.
+  - `DIRECT MESSAGES` intent is requested in code (no portal toggle needed) — required for bot to receive nuclear code via DM.
 
 ## Setup
 
@@ -80,6 +104,6 @@ Kode nuklir bersifat **rahasia** dan tidak ditampilkan di help/README. Set lewat
 ## Notes
 
 - Prefix is forced to `b.`.
-- gacha commands only work in channels enabled via `b.nsfw`.
+- Gacha commands only work in channels enabled via `b.nsfw`.
 - Rule34 API now requires authentication; bot will fail startup if credentials are missing.
 - Video posts are sent as direct media URLs in message content instead of file uploads.
