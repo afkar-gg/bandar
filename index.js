@@ -49,7 +49,7 @@ dns.lookup = function(hostname, options, callback) {
     }
   };
   
-  const bypassHosts = ['nekopoi.care', 'streampoi.com', 'playmogo.com', 'api-inference.huggingface.co', 'huggingface.co'];
+  const bypassHosts = ['nekopoi.care', 'streampoi.com', 'playmogo.com', 'api-inference.huggingface.co', 'huggingface.co', 'nhentai.net'];
   const shouldBypass = bypassHosts.some(host => hostname === host || hostname.endsWith('.' + host));
   
   if (shouldBypass) {
