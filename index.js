@@ -1,5 +1,18 @@
 'use strict';
 
+// Load environment variables from .env if present
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile();
+  } else {
+    require('dotenv').config();
+  }
+} catch (error) {
+  if (error && error.code !== 'ENOENT' && error.code !== 'MODULE_NOT_FOUND') {
+    console.warn(`[Config] Notice: .env file was not loaded: ${error.message}`);
+  }
+}
+
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const dns = require('node:dns');
@@ -110,42 +123,53 @@ async function writeJsonAtomic(filePath, value) {
   await fs.rename(tmpPath, filePath);
 }
 
-function normalizeConfig(config) {
+function normalizeConfig(config = {}) {
   const resolved = { ...config };
 
-  resolved.prefix = 'b.';
-  resolved.requestTimeoutMs = Number(resolved.requestTimeoutMs) > 0 ? Number(resolved.requestTimeoutMs) : 12000;
-  resolved.imageGenTimeoutMs = Number(resolved.imageGenTimeoutMs) > 0 ? Number(resolved.imageGenTimeoutMs) : 120000;
-  resolved.rule34MaxAttempts = Number(resolved.rule34MaxAttempts) > 0 ? Number(resolved.rule34MaxAttempts) : 4;
-  resolved.rule34PagePool = Number(resolved.rule34PagePool) > 0 ? Number(resolved.rule34PagePool) : 150;
-  resolved.userAgent = resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-  resolved.pollinationsApiKey = resolved.pollinationsApiKey || '';
-  resolved.hordeApiKey = resolved.hordeApiKey || '';
-  resolved.hordeTimeoutMs = Number(resolved.hordeTimeoutMs) > 0 ? Number(resolved.hordeTimeoutMs) : 600000;
+  // Environment variables override config.json values if present, otherwise fallback to config.json
+  resolved.token = process.env.DISCORD_TOKEN || process.env.TOKEN || resolved.token;
+  resolved.rule34UserId = process.env.RULE34_USER_ID || resolved.rule34UserId;
+  resolved.rule34ApiKey = process.env.RULE34_API_KEY || resolved.rule34ApiKey;
+  resolved.nhentaiApiKey = process.env.NHENTAI_API_KEY || resolved.nhentaiApiKey || '';
+  resolved.pollinationsApiKey = process.env.POLLINATIONS_API_KEY || resolved.pollinationsApiKey || '';
+  resolved.hordeApiKey = process.env.HORDE_API_KEY || resolved.hordeApiKey || '';
+
+  resolved.prefix = process.env.PREFIX || resolved.prefix || 'b.';
+  resolved.requestTimeoutMs = Number(process.env.REQUEST_TIMEOUT_MS || resolved.requestTimeoutMs) > 0 ? Number(process.env.REQUEST_TIMEOUT_MS || resolved.requestTimeoutMs) : 12000;
+  resolved.imageGenTimeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_MS || resolved.imageGenTimeoutMs) > 0 ? Number(process.env.IMAGE_GEN_TIMEOUT_MS || resolved.imageGenTimeoutMs) : 120000;
+  resolved.rule34MaxAttempts = Number(process.env.RULE34_MAX_ATTEMPTS || resolved.rule34MaxAttempts) > 0 ? Number(process.env.RULE34_MAX_ATTEMPTS || resolved.rule34MaxAttempts) : 4;
+  resolved.rule34PagePool = Number(process.env.RULE34_PAGE_POOL || resolved.rule34PagePool) > 0 ? Number(process.env.RULE34_PAGE_POOL || resolved.rule34PagePool) : 150;
+  resolved.userAgent = process.env.USER_AGENT || resolved.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  resolved.hordeTimeoutMs = Number(process.env.HORDE_TIMEOUT_MS || resolved.hordeTimeoutMs) > 0 ? Number(process.env.HORDE_TIMEOUT_MS || resolved.hordeTimeoutMs) : 600000;
+
   // Nuclear code for self-destruct: secret, only for Server Owner / Administrator.
   // Can be set via config.json ("nukePassword") or env NUKE_PASSWORD (safer).
   resolved.nukePassword = process.env.NUKE_PASSWORD || resolved.nukePassword || '';
   resolved.purgePassword = process.env.PURGE_PASSWORD || resolved.purgePassword || '';
-  resolved.nukeCountdownSeconds = Number.isFinite(Number(resolved.nukeCountdownSeconds)) && Number(resolved.nukeCountdownSeconds) >= 0 ? Number(resolved.nukeCountdownSeconds) : 10;
-  resolved.purgeCountdownSeconds = Number.isFinite(Number(resolved.purgeCountdownSeconds)) && Number(resolved.purgeCountdownSeconds) >= 0 ? Number(resolved.purgeCountdownSeconds) : 10;
+  resolved.nukeCountdownSeconds = Number.isFinite(Number(process.env.NUKE_COUNTDOWN_SECONDS || resolved.nukeCountdownSeconds)) && Number(process.env.NUKE_COUNTDOWN_SECONDS || resolved.nukeCountdownSeconds) >= 0 ? Number(process.env.NUKE_COUNTDOWN_SECONDS || resolved.nukeCountdownSeconds) : 10;
+  resolved.purgeCountdownSeconds = Number.isFinite(Number(process.env.PURGE_COUNTDOWN_SECONDS || resolved.purgeCountdownSeconds)) && Number(process.env.PURGE_COUNTDOWN_SECONDS || resolved.purgeCountdownSeconds) >= 0 ? Number(process.env.PURGE_COUNTDOWN_SECONDS || resolved.purgeCountdownSeconds) : 10;
 
   if (!resolved.token || typeof resolved.token !== 'string') {
-    throw new Error('config.json is missing "token".');
+    throw new Error('Missing "token" (can be configured in config.json or via DISCORD_TOKEN in .env).');
   }
 
   if (!resolved.rule34UserId || !resolved.rule34ApiKey) {
-    throw new Error('config.json requires "rule34UserId" and "rule34ApiKey" for Rule34 API authentication.');
+    throw new Error('Missing "rule34UserId" and "rule34ApiKey" for Rule34 API authentication (can be configured in config.json or via RULE34_USER_ID / RULE34_API_KEY in .env).');
   }
 
   return resolved;
 }
 
 async function loadConfig() {
-  let config;
+  let config = {};
   try {
     config = await readJson(CONFIG_PATH);
   } catch (error) {
-    throw new Error(`Failed to read config.json: ${error.message}`);
+    if (error && error.code === 'ENOENT') {
+      config = {};
+    } else {
+      throw new Error(`Failed to read config.json: ${error.message}`);
+    }
   }
 
   return normalizeConfig(config);

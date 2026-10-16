@@ -2,3 +2,6 @@ node_modules/
 config.json
 logs/
 channels.json
+.env
+.env.*
+!.env.example
